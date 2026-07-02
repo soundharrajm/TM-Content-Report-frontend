@@ -3,7 +3,7 @@ import * as XLSX from "xlsx"
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_BASE
-  || 'https://basically-praising-paving.ngrok-free.app/report'
+  || 'http://localhost:8002'
 
 const C = {
   navy:'#1F3864',blue:'#2E75B6',teal:'#0D7377',
@@ -11,10 +11,10 @@ const C = {
   bg:'#F0F4FA',card:'#FFFFFF',border:'#D0DAF0',
   text:'#1a1a2e',muted:'#5a6a8a',
 }
-const CONTENT_TYPES = ['Movie','Live Event','Trailer','Series','Season','Episode']
+const CONTENT_TYPES = ['Movie','Event','Trailer','Series','Season','Episode']
 
 // ── Fallback: parse locally if backend unavailable ─────────────────────────
-const CT_MAP = {tvepisode:'Episode',movie:'Movie',trailer:'Trailer',event:'Live Event',tvseries:'Series',tvseason:'Season'}
+const CT_MAP = {tvepisode:'Episode',movie:'Movie',trailer:'Trailer',event:'Event',tvseries:'Series',tvseason:'Season'}
 const round = (v,dp=2) => Math.round(v*10**dp)/10**dp
 
 function formatDateCol(iso) {
