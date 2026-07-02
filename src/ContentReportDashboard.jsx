@@ -126,7 +126,7 @@ export default function ContentReportDashboard(){
   const uploadToBackend = async (file) => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${apiBase}/report/generate`, {method:'POST', body:form})
+    const res = await fetch(`${apiBase}/generate`, {method:'POST', body:form})
     if (!res.ok) throw new Error(`Backend error: ${res.status}`)
     return res.json()
   }
@@ -169,7 +169,7 @@ export default function ContentReportDashboard(){
     try {
       if (data?.download_ready) {
         // Backend has the Excel ready — stream it directly
-        const res = await fetch(`${apiBase}/report/download`)
+        const res = await fetch(`${apiBase}/download`)
         if (!res.ok) throw new Error('Download failed')
         const blob = await res.blob()
         const url  = URL.createObjectURL(blob)
