@@ -3,8 +3,7 @@ import * as XLSX from "xlsx"
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_BASE
-  || localStorage.getItem('report_api_base')
-  || 'http://localhost:8002'
+  || 'https://basically-praising-paving.ngrok-free.app/report'
 
 const C = {
   navy:'#1F3864',blue:'#2E75B6',teal:'#0D7377',
