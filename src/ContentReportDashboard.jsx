@@ -2,8 +2,9 @@ import { useState, useCallback } from "react"
 import * as XLSX from "xlsx"
 
 // ── Config ────────────────────────────────────────────────────────────────────
-// Change this to your backend URL when deployed
-const API_BASE = localStorage.getItem('report_api_base') || 'http://localhost:8002'
+const API_BASE = import.meta.env.VITE_API_BASE
+  || localStorage.getItem('report_api_base')
+  || 'http://localhost:8002'
 
 const C = {
   navy:'#1F3864',blue:'#2E75B6',teal:'#0D7377',
