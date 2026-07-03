@@ -226,7 +226,7 @@ export default function ContentReportDashboard(){
         const url  = URL.createObjectURL(blob)
         const a    = document.createElement('a')
         a.href     = url
-        a.download = `IPLM_Content_Report_${new Date().toISOString().split('T')[0]}.xlsx`
+        a.download = `TM_Content_Report_${new Date().toISOString().split('T')[0]}.xlsx`
         a.click()
         URL.revokeObjectURL(url)
       } else {
@@ -267,7 +267,7 @@ export default function ContentReportDashboard(){
         const ws2 = XLSX.utils.aoa_to_sheet(rows)
         ws2['!cols']=[{wch:28},...date_cols.map(()=>({wch:9})),{wch:10}]
         XLSX.utils.book_append_sheet(wb,ws2,'Date-wise Report')
-        XLSX.writeFile(wb,`IPLM_Content_Report_${new Date().toISOString().split('T')[0]}.xlsx`)
+        XLSX.writeFile(wb,`TM_Content_Report_${new Date().toISOString().split('T')[0]}.xlsx`)
       }
     } catch(err) {
       setError('Download failed: '+err.message)
