@@ -381,6 +381,7 @@ export default function ContentReportDashboard(){
     ...CONTENT_TYPES.map(ct=>({metric:ct,group:'type'})),
     {metric:'Manual Content',group:'manual'},{metric:'Manual Hours',group:'manual'},
     {metric:'L2V Content',group:'l2v'},{metric:'L2V Hours',group:'l2v'},
+    {metric:'DVB Content',group:'dvb'},{metric:'DVB Hours',group:'dvb'},
   ]
   const GRP_COLOR={overall:C.blue,type:C.teal,manual:C.amber,l2v:C.purple,dvb:'#0E6655'}
   const GRP_BG   ={overall:'#EAF1FB',type:'#EEF8EE',manual:'#FFF9EC',l2v:'#F5F0FF',dvb:'#E8F8F5'}
@@ -483,6 +484,12 @@ export default function ContentReportDashboard(){
             </div>
 
             {/* Full table */}
+            <SecHdr color={'#0E6655'}>DVB Processed</SecHdr>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
+              <KpiCard label="DVB Processed Content" value={summary.dvb_content||0} color={'#0E6655'}/>
+              <KpiCard label="DVB Processed Hours"   value={`${summary.dvb_hours||0}h`} color={'#0E6655'}/>
+            </div>
+
             <SecHdr color={C.navy}>Full Breakdown</SecHdr>
             <div style={{background:C.card,borderRadius:10,border:`1px solid ${C.border}`,overflow:'hidden'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
