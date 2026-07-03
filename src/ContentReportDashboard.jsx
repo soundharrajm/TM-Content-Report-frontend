@@ -3,7 +3,7 @@ import * as XLSX from "xlsx"
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_BASE
-  || 'http://localhost:8002'
+  || 'https://womanless-spent-scale.ngrok-free.dev'
 
 const C = {
   navy:'#1F3864',blue:'#2E75B6',teal:'#0D7377',
@@ -415,7 +415,8 @@ export default function ContentReportDashboard(){
           <>
             <SecHdr color={C.blue}>Overall Published</SecHdr>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-              <KpiCard label="Total Published Content" value={summary.total_content} hours={summary.total_hours} color={C.blue}/>
+              <KpiCard label="Total Published Content" value={summary.total_content} color={C.blue}/>
+              <KpiCard label="Total Published Hours"   value={`${summary.total_hours}h`} color={C.blue} sub="from MySQL duration query"/>
             </div>
 
             <SecHdr color={C.teal}>By Content Type</SecHdr>
