@@ -65,13 +65,25 @@ function parseLocally(rows) {
   const pub  = df.filter(r=>r.isPub)
   const man  = df.filter(r=>r.isManual)
   const l2v  = df.filter(r=>r.isL2V)
-  const arch = df.filter(r=>r.isArch)
-  const prg  = df.filter(r=>r.isPurged)
+  const l2vPub  = df.filter(r=>r.isAiring && r.isPub)
+  const l2vArch = df.filter(r=>r.isAiring && r.isArch)
+  const l2vPrg  = df.filter(r=>r.isAiring && r.isPurged)
+  const manArch = df.filter(r=>!r.isAiring && r.isArch)
+  const manPrg  = df.filter(r=>!r.isAiring && r.isPurged)
+  // Total Archived/Purged = Manual + L2V breakdown (explicit sum)
+  const archContent = manArch.length + l2vArch.length
+  const archHours   = round(manArch.reduce((s,r)=>s+r.durHrs,0) + l2vArch.reduce((s,r)=>s+r.durHrs,0))
+  const prgContent  = manPrg.length + l2vPrg.length
+  const prgHours    = round(manPrg.reduce((s,r)=>s+r.durHrs,0) + l2vPrg.reduce((s,r)=>s+r.durHrs,0))
   const allDates = [...new Set(df.map(r=>r.date).filter(Boolean))].sort()
   const dateCols  = allDates.map(formatDateCol)
 
   const metrics = ['Total Published Content','Total Published Hours',
-    ...CONTENT_TYPES,'Manual Content','Manual Hours','L2V Content','L2V Hours',
+    ...CONTENT_TYPES,'Manual Content','Manual Hours',
+    'Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours',
+    'L2V Content','L2V Hours',
+    'L2V Published Content','L2V Published Hours','L2V Archived Content','L2V Archived Hours',
+    'L2V Purged Content','L2V Purged Hours',
     'Archived Content','Archived Hours','Purged Content','Purged Hours']
   const datewise = {}
   metrics.forEach(m=>{datewise[m]={}})
@@ -80,19 +92,33 @@ function parseLocally(rows) {
     const dayPub  = pub.filter(r=>r.date===d)
     const dayMan  = man.filter(r=>r.date===d)
     const dayL2V  = l2v.filter(r=>r.date===d)
-    const dayArch = arch.filter(r=>r.date===d)
-    const dayPrg  = prg.filter(r=>r.date===d)
+    const dayL2VPub  = l2vPub.filter(r=>r.date===d)
+    const dayL2VArch = l2vArch.filter(r=>r.date===d)
+    const dayL2VPrg  = l2vPrg.filter(r=>r.date===d)
+    const dayManArch = manArch.filter(r=>r.date===d)
+    const dayManPrg  = manPrg.filter(r=>r.date===d)
     datewise['Total Published Content'][col] = dayPub.length
     datewise['Total Published Hours'][col]   = round(dayPub.reduce((s,r)=>s+r.durHrs,0))
     CONTENT_TYPES.forEach(ct=>{datewise[ct][col]=dayPub.filter(r=>r.ct===ct).length})
     datewise['Manual Content'][col] = dayMan.length
     datewise['Manual Hours'][col]   = round(dayMan.reduce((s,r)=>s+r.durHrs,0))
+    datewise['Manual Archived Content'][col] = dayManArch.length
+    datewise['Manual Archived Hours'][col]   = round(dayManArch.reduce((s,r)=>s+r.durHrs,0))
+    datewise['Manual Purged Content'][col]   = dayManPrg.length
+    datewise['Manual Purged Hours'][col]     = round(dayManPrg.reduce((s,r)=>s+r.durHrs,0))
     datewise['L2V Content'][col]    = dayL2V.length
     datewise['L2V Hours'][col]      = round(dayL2V.reduce((s,r)=>s+r.durHrs,0))
-    datewise['Archived Content'][col] = dayArch.length
-    datewise['Archived Hours'][col]   = round(dayArch.reduce((s,r)=>s+r.durHrs,0))
-    datewise['Purged Content'][col]   = dayPrg.length
-    datewise['Purged Hours'][col]     = round(dayPrg.reduce((s,r)=>s+r.durHrs,0))
+    datewise['L2V Published Content'][col] = dayL2VPub.length
+    datewise['L2V Published Hours'][col]   = round(dayL2VPub.reduce((s,r)=>s+r.durHrs,0))
+    datewise['L2V Archived Content'][col]  = dayL2VArch.length
+    datewise['L2V Archived Hours'][col]    = round(dayL2VArch.reduce((s,r)=>s+r.durHrs,0))
+    datewise['L2V Purged Content'][col]    = dayL2VPrg.length
+    datewise['L2V Purged Hours'][col]      = round(dayL2VPrg.reduce((s,r)=>s+r.durHrs,0))
+    // Total Archived/Purged per day = Manual + L2V breakdown (explicit sum)
+    datewise['Archived Content'][col] = dayManArch.length + dayL2VArch.length
+    datewise['Archived Hours'][col]   = round(dayManArch.reduce((s,r)=>s+r.durHrs,0) + dayL2VArch.reduce((s,r)=>s+r.durHrs,0))
+    datewise['Purged Content'][col]   = dayManPrg.length + dayL2VPrg.length
+    datewise['Purged Hours'][col]     = round(dayManPrg.reduce((s,r)=>s+r.durHrs,0) + dayL2VPrg.reduce((s,r)=>s+r.durHrs,0))
   })
 
   const byType      = {}
@@ -109,9 +135,14 @@ function parseLocally(rows) {
       total_content: pub.length, total_hours: round(pub.reduce((s,r)=>s+r.durHrs,0)),
       by_type: byType, by_type_hours: byTypeHours,
       manual_content: man.length, manual_hours: round(man.reduce((s,r)=>s+r.durHrs,0)),
+      manual_archived_content: manArch.length, manual_archived_hours: round(manArch.reduce((s,r)=>s+r.durHrs,0)),
+      manual_purged_content:   manPrg.length,  manual_purged_hours:   round(manPrg.reduce((s,r)=>s+r.durHrs,0)),
       l2v_content: l2v.length,   l2v_hours:    round(l2v.reduce((s,r)=>s+r.durHrs,0)),
-      archived_content: arch.length, archived_hours: round(arch.reduce((s,r)=>s+r.durHrs,0)),
-      purged_content:   prg.length,  purged_hours:   round(prg.reduce((s,r)=>s+r.durHrs,0)),
+      l2v_published_content: l2vPub.length,  l2v_published_hours: round(l2vPub.reduce((s,r)=>s+r.durHrs,0)),
+      l2v_archived_content:  l2vArch.length, l2v_archived_hours:  round(l2vArch.reduce((s,r)=>s+r.durHrs,0)),
+      l2v_purged_content:    l2vPrg.length,  l2v_purged_hours:    round(l2vPrg.reduce((s,r)=>s+r.durHrs,0)),
+      archived_content: archContent, archived_hours: archHours,
+      purged_content:   prgContent,  purged_hours:   prgHours,
       dvb_content: 0,  dvb_hours: 0,  // placeholder until DVB logic defined
     },
     datewise: Object.keys(datewise[metrics[0]]).length
@@ -283,7 +314,11 @@ export default function ContentReportDashboard(){
         const { summary, datewise, date_cols } = data
         const wb = XLSX.utils.book_new()
         const metrics = ['Total Published Content','Total Published Hours',
-          ...CONTENT_TYPES,'Manual Content','Manual Hours','L2V Content','L2V Hours',
+          ...CONTENT_TYPES,'Manual Content','Manual Hours',
+          'Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours',
+          'L2V Content','L2V Hours',
+          'L2V Published Content','L2V Published Hours','L2V Archived Content','L2V Archived Hours',
+          'L2V Purged Content','L2V Purged Hours',
           'Archived Content','Archived Hours','Purged Content','Purged Hours']
 
         const s = [
@@ -304,10 +339,20 @@ export default function ContentReportDashboard(){
           ]),['',''],
           ['MANUAL INSERTION',''],
           ['Manual Insertion Published Content', summary.manual_content],
-          ['Manual Insertion Published Hours',   summary.manual_hours],['',''],
+          ['Manual Insertion Published Hours',   summary.manual_hours],
+          ['Manual Insertion Archived Content',  summary.manual_archived_content||0],
+          ['Manual Insertion Archived Hours',    summary.manual_archived_hours||0],
+          ['Manual Insertion Purged Content',    summary.manual_purged_content||0],
+          ['Manual Insertion Purged Hours',      summary.manual_purged_hours||0],['',''],
           ['L2V (Live-to-VOD)',''],
-          ['L2V Published Content', summary.l2v_content],
-          ['L2V Published Hours',   summary.l2v_hours],
+          ['L2V Total Content', summary.l2v_content],
+          ['L2V Total Hours',   summary.l2v_hours],
+          ['L2V Published Content', summary.l2v_published_content||0],
+          ['L2V Published Hours',   summary.l2v_published_hours||0],
+          ['L2V Archived Content',  summary.l2v_archived_content||0],
+          ['L2V Archived Hours',    summary.l2v_archived_hours||0],
+          ['L2V Purged Content',    summary.l2v_purged_content||0],
+          ['L2V Purged Hours',      summary.l2v_purged_hours||0],
         ]
         const ws1 = XLSX.utils.aoa_to_sheet(s)
         ws1['!cols']=[{wch:42},{wch:18}]
@@ -421,7 +466,12 @@ export default function ContentReportDashboard(){
     {metric:'Purged Content',group:'purged'},{metric:'Purged Hours',group:'purged'},
     ...CONTENT_TYPES.map(ct=>({metric:ct,group:'type'})),
     {metric:'Manual Content',group:'manual'},{metric:'Manual Hours',group:'manual'},
+    {metric:'Manual Archived Content',group:'manual'},{metric:'Manual Archived Hours',group:'manual'},
+    {metric:'Manual Purged Content',group:'manual'},{metric:'Manual Purged Hours',group:'manual'},
     {metric:'L2V Content',group:'l2v'},{metric:'L2V Hours',group:'l2v'},
+    {metric:'L2V Published Content',group:'l2v'},{metric:'L2V Published Hours',group:'l2v'},
+    {metric:'L2V Archived Content',group:'l2v'},{metric:'L2V Archived Hours',group:'l2v'},
+    {metric:'L2V Purged Content',group:'l2v'},{metric:'L2V Purged Hours',group:'l2v'},
     {metric:'DVB Content',group:'dvb'},{metric:'DVB Hours',group:'dvb'},
   ]
   const GRP_COLOR={overall:C.blue,type:C.teal,manual:C.amber,l2v:C.purple,dvb:'#0E6655',archived:C.archived,purged:C.purged}
@@ -523,15 +573,35 @@ export default function ContentReportDashboard(){
               <div>
                 <SecHdr color={C.amber}>Manual Insertion</SecHdr>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                  <KpiCard label="Content" value={summary.manual_content} color={C.amber}/>
-                  <KpiCard label="Hours" value={`${summary.manual_hours}h`} color={C.amber}/>
+                  <KpiCard label="Total Content" value={summary.manual_content} color={C.amber}/>
+                  <KpiCard label="Total Hours" value={`${summary.manual_hours}h`} color={C.amber}/>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                  <KpiCard label="Archived — Content" value={summary.manual_archived_content||0} color={C.amber}/>
+                  <KpiCard label="Archived — Hours" value={`${summary.manual_archived_hours||0}h`} color={C.amber}/>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                  <KpiCard label="Purged — Content" value={summary.manual_purged_content||0} color={C.amber}/>
+                  <KpiCard label="Purged — Hours" value={`${summary.manual_purged_hours||0}h`} color={C.amber}/>
                 </div>
               </div>
               <div>
                 <SecHdr color={C.purple}>L2V (Live-to-VOD)</SecHdr>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                  <KpiCard label="Content" value={summary.l2v_content} color={C.purple}/>
-                  <KpiCard label="Hours" value={`${summary.l2v_hours}h`} color={C.purple}/>
+                  <KpiCard label="Total Content" value={summary.l2v_content} color={C.purple}/>
+                  <KpiCard label="Total Hours" value={`${summary.l2v_hours}h`} color={C.purple}/>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                  <KpiCard label="Published — Content" value={summary.l2v_published_content||0} color={C.purple}/>
+                  <KpiCard label="Published — Hours" value={`${summary.l2v_published_hours||0}h`} color={C.purple}/>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                  <KpiCard label="Archived — Content" value={summary.l2v_archived_content||0} color={C.purple}/>
+                  <KpiCard label="Archived — Hours" value={`${summary.l2v_archived_hours||0}h`} color={C.purple}/>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                  <KpiCard label="Purged — Content" value={summary.l2v_purged_content||0} color={C.purple}/>
+                  <KpiCard label="Purged — Hours" value={`${summary.l2v_purged_hours||0}h`} color={C.purple}/>
                 </div>
               </div>
             </div>
