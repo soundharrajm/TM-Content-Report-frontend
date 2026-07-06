@@ -202,10 +202,12 @@ export default function ContentReportDashboard(){
   const [loadingMsg,setLoadingMsg] = useState('Processing file...')
   const [apiBase,setApiBase]   = useState(API_BASE)
   const [showApi,setShowApi]   = useState(false)
+  const [includeArchivedPurged, setIncludeArchivedPurged] = useState(true)
 
   const uploadToBackend = async (file) => {
     const form = new FormData()
     form.append('file', file)
+    form.append('include_archived_purged', includeArchivedPurged ? 'true' : 'false')
     const res = await fetch(`${apiBase}/generate`, {method:'POST', body:form, headers:{'ngrok-skip-browser-warning':'1'}})
     if (!res.ok) throw new Error(`Backend error: ${res.status}`)
     return res.json()
@@ -407,6 +409,16 @@ export default function ContentReportDashboard(){
         <h1 style={{fontSize:24,fontWeight:800,color:C.navy,marginBottom:6}}>TM Content Report</h1>
         <p style={{color:C.muted,fontSize:14,marginBottom:28}}>Upload content-report.xlsx to generate the publishing dashboard</p>
 
+        <label style={{display:'flex',alignItems:'center',gap:8,justifyContent:'center',fontSize:13,color:C.navy,marginBottom:16,cursor:'pointer'}}>
+          <input
+            type="checkbox"
+            checked={includeArchivedPurged}
+            onChange={e=>setIncludeArchivedPurged(e.target.checked)}
+            style={{width:15,height:15,cursor:'pointer'}}
+          />
+          Include Archived &amp; Purged breakdown (UI cards + Excel sheets)
+        </label>
+
         <div
           onDrop={onDrop}
           onDragOver={e=>{e.preventDefault();setDrag(true)}}
@@ -566,17 +578,21 @@ export default function ContentReportDashboard(){
               <KpiCard label="Total Published Hours"   value={`${summary.total_hours}h`} color={C.blue} sub="from MySQL duration query"/>
             </div>
 
-            <SecHdr color={C.archived}>Total Archived</SecHdr>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-              <KpiCard label="Total Archived Content" value={summary.archived_content||0} color={C.archived}/>
-              <KpiCard label="Total Archived Hours"   value={`${summary.archived_hours||0}h`} color={C.archived}/>
-            </div>
+            {includeArchivedPurged && (
+              <>
+                <SecHdr color={C.archived}>Total Archived</SecHdr>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
+                  <KpiCard label="Total Archived Content" value={summary.archived_content||0} color={C.archived}/>
+                  <KpiCard label="Total Archived Hours"   value={`${summary.archived_hours||0}h`} color={C.archived}/>
+                </div>
 
-            <SecHdr color={C.purged}>Total Purged</SecHdr>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-              <KpiCard label="Total Purged Content" value={summary.purged_content||0} color={C.purged}/>
-              <KpiCard label="Total Purged Hours"   value={`${summary.purged_hours||0}h`} color={C.purged}/>
-            </div>
+                <SecHdr color={C.purged}>Total Purged</SecHdr>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
+                  <KpiCard label="Total Purged Content" value={summary.purged_content||0} color={C.purged}/>
+                  <KpiCard label="Total Purged Hours"   value={`${summary.purged_hours||0}h`} color={C.purged}/>
+                </div>
+              </>
+            )}
 
             <SecHdr color={C.teal}>By Content Type</SecHdr>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:12}}>
@@ -594,14 +610,18 @@ export default function ContentReportDashboard(){
                   <KpiCard label="Total Content" value={summary.manual_content} color={C.amber}/>
                   <KpiCard label="Total Hours" value={`${summary.manual_hours}h`} color={C.amber}/>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                  <KpiCard label="Archived — Content" value={summary.manual_archived_content||0} color={C.amber}/>
-                  <KpiCard label="Archived — Hours" value={`${summary.manual_archived_hours||0}h`} color={C.amber}/>
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                  <KpiCard label="Purged — Content" value={summary.manual_purged_content||0} color={C.amber}/>
-                  <KpiCard label="Purged — Hours" value={`${summary.manual_purged_hours||0}h`} color={C.amber}/>
-                </div>
+                {includeArchivedPurged && (
+                  <>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                      <KpiCard label="Archived — Content" value={summary.manual_archived_content||0} color={C.amber}/>
+                      <KpiCard label="Archived — Hours" value={`${summary.manual_archived_hours||0}h`} color={C.amber}/>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                      <KpiCard label="Purged — Content" value={summary.manual_purged_content||0} color={C.amber}/>
+                      <KpiCard label="Purged — Hours" value={`${summary.manual_purged_hours||0}h`} color={C.amber}/>
+                    </div>
+                  </>
+                )}
               </div>
               <div>
                 <SecHdr color={C.purple}>L2V (Live-to-VOD)</SecHdr>
@@ -613,14 +633,18 @@ export default function ContentReportDashboard(){
                   <KpiCard label="Published — Content" value={summary.l2v_published_content||0} color={C.purple}/>
                   <KpiCard label="Published — Hours" value={`${summary.l2v_published_hours||0}h`} color={C.purple}/>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                  <KpiCard label="Archived — Content" value={summary.l2v_archived_content||0} color={C.purple}/>
-                  <KpiCard label="Archived — Hours" value={`${summary.l2v_archived_hours||0}h`} color={C.purple}/>
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                  <KpiCard label="Purged — Content" value={summary.l2v_purged_content||0} color={C.purple}/>
-                  <KpiCard label="Purged — Hours" value={`${summary.l2v_purged_hours||0}h`} color={C.purple}/>
-                </div>
+                {includeArchivedPurged && (
+                  <>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                      <KpiCard label="Archived — Content" value={summary.l2v_archived_content||0} color={C.purple}/>
+                      <KpiCard label="Archived — Hours" value={`${summary.l2v_archived_hours||0}h`} color={C.purple}/>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                      <KpiCard label="Purged — Content" value={summary.l2v_purged_content||0} color={C.purple}/>
+                      <KpiCard label="Purged — Hours" value={`${summary.l2v_purged_hours||0}h`} color={C.purple}/>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
