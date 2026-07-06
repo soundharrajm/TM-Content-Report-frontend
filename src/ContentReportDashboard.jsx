@@ -23,11 +23,28 @@ function formatDateCol(iso) {
   return `${d.getDate()}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]}`
 }
 
+// ── Column normalization — case & separator insensitive ────────────────────────
+const normKey = s => String(s).trim().toLowerCase().replace(/[\s_-]/g,'')
+const CANONICAL_COLUMNS = {
+  contentkey:'Content Key', contentid:'Content ID', contenttype:'Content Type',
+  externalid:'external_id', vodcmsstatus:'vod_cms_status', createddate:'Created Date',
+  title:'Title', contenttitle:'Title', duration:'duration', durationhrs:'_duration_hrs',
+}
+function normalizeRow(r) {
+  const out = {...r}
+  Object.keys(r).forEach(k=>{
+    const canon = CANONICAL_COLUMNS[normKey(k)]
+    if (canon && !(canon in out)) out[canon] = r[k]
+  })
+  return out
+}
+
 function parseLocally(rows) {
-  const df = rows.map(r => {
+  const df = rows.map(rawRow => {
+    const r = normalizeRow(rawRow)
     const created  = r['Created Date'] ? new Date(r['Created Date']) : null
     const dateStr  = created ? created.toISOString().split('T')[0] : null
-    const extId    = String(r['External ID']||'')
+    const extId    = String(r['external_id']||'').trim().toLowerCase()
     const isAiring = extId.startsWith('airing-')
     const ct       = CT_MAP[String(r['Content Type']||'').toLowerCase()] || r['Content Type']
     const vcs      = String(r['vod_cms_status']||'').trim().toLowerCase()
@@ -36,7 +53,7 @@ function parseLocally(rows) {
     const isArch   = vcs === 'archived'
     const isPurged = vcs === 'purged'
     const isManual = !isAiring && isPub
-    const isL2V    = isAiring && isPub
+    const isL2V    = isAiring && (isPub || isArch || isPurged)
     // Duration: _duration_hrs (hours) OR duration (seconds auto-converted)
     const durHrs = isNoVid ? 0
       : r['_duration_hrs']  ? parseFloat(r['_duration_hrs']||0)
@@ -365,7 +382,7 @@ export default function ContentReportDashboard(){
             <li>Archived = vod_cms_status is <code>archived</code></li>
             <li>Purged = vod_cms_status is <code>purged</code></li>
             <li>Manual = non-airing External ID + published</li>
-            <li>L2V = External ID starts with <code>airing-</code> + published</li>
+            <li>L2V = External ID starts with <code>airing-</code> (any status: published/archived/purged)</li>
             <li>If file has <code>_duration_hrs</code> → uses it, skips MySQL</li>
             <li>Series/Season duration always = 0</li>
           </ul>
