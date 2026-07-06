@@ -78,7 +78,7 @@ function parseLocally(rows) {
 
   const pub  = df.filter(r=>r.isPub)
   const man  = df.filter(r=>r.isManual)              // manual, published only
-  const manTotal = df.filter(r=>!r.isAiring)          // manual, any status — mirrors L2V's total
+  const manTotal = df.filter(r=>!r.isAiring && (r.isPub || r.isArch || r.isPurged))  // mirrors L2V's l2v filter
   const l2v  = df.filter(r=>r.isL2V)
   const l2vPub  = df.filter(r=>r.isAiring && r.isPub)
   const l2vArch = df.filter(r=>r.isAiring && r.isArch)
