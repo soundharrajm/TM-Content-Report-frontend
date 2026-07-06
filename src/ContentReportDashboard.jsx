@@ -319,8 +319,8 @@ export default function ContentReportDashboard(){
     setDlLoading(true)
     try {
       if (data?.download_ready) {
-        // Backend has the Excel ready — stream it directly
-        const res = await fetch(`${apiBase}/download`, {headers:{'ngrok-skip-browser-warning':'1'}})
+        // Backend has the Excel ready — stream it directly (rebuilt server-side if flag changed)
+        const res = await fetch(`${apiBase}/download?include_archived_purged=${includeArchivedPurged}`, {headers:{'ngrok-skip-browser-warning':'1'}})
         if (!res.ok) throw new Error('Download failed')
         const blob = await res.blob()
         const url  = URL.createObjectURL(blob)
@@ -335,23 +335,25 @@ export default function ContentReportDashboard(){
         const wb = XLSX.utils.book_new()
         const metrics = ['Total Published Content','Total Published Hours',
           ...CONTENT_TYPES,'Manual Content','Manual Hours',
-          'Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours',
+          ...(includeArchivedPurged ? ['Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours'] : []),
           'L2V Content','L2V Hours',
-          'L2V Published Content','L2V Published Hours','L2V Archived Content','L2V Archived Hours',
-          'L2V Purged Content','L2V Purged Hours',
-          'Archived Content','Archived Hours','Purged Content','Purged Hours']
+          'L2V Published Content','L2V Published Hours',
+          ...(includeArchivedPurged ? ['L2V Archived Content','L2V Archived Hours','L2V Purged Content','L2V Purged Hours'] : []),
+          ...(includeArchivedPurged ? ['Archived Content','Archived Hours','Purged Content','Purged Hours'] : [])]
 
         const s = [
           ['TM Content Publishing Summary',''],['',''],
           ['OVERALL',''],
           ['Total Published Content (All)', summary.total_content],
           ['Total Published Hours (All)',   summary.total_hours],['',''],
-          ['ARCHIVED',''],
-          ['Total Archived Content', summary.archived_content||0],
-          ['Total Archived Hours',   summary.archived_hours||0],['',''],
-          ['PURGED',''],
-          ['Total Purged Content', summary.purged_content||0],
-          ['Total Purged Hours',   summary.purged_hours||0],['',''],
+          ...(includeArchivedPurged ? [
+            ['ARCHIVED',''],
+            ['Total Archived Content', summary.archived_content||0],
+            ['Total Archived Hours',   summary.archived_hours||0],['',''],
+            ['PURGED',''],
+            ['Total Purged Content', summary.purged_content||0],
+            ['Total Purged Hours',   summary.purged_hours||0],['',''],
+          ] : []),
           ['BY CONTENT TYPE',''],
           ...CONTENT_TYPES.flatMap(ct=>[
             [`  ${ct} — Content`, summary.by_type[ct]||0],
@@ -360,19 +362,23 @@ export default function ContentReportDashboard(){
           ['MANUAL INSERTION',''],
           ['Manual Insertion Published Content', summary.manual_content],
           ['Manual Insertion Published Hours',   summary.manual_hours],
-          ['Manual Insertion Archived Content',  summary.manual_archived_content||0],
-          ['Manual Insertion Archived Hours',    summary.manual_archived_hours||0],
-          ['Manual Insertion Purged Content',    summary.manual_purged_content||0],
-          ['Manual Insertion Purged Hours',      summary.manual_purged_hours||0],['',''],
+          ...(includeArchivedPurged ? [
+            ['Manual Insertion Archived Content',  summary.manual_archived_content||0],
+            ['Manual Insertion Archived Hours',    summary.manual_archived_hours||0],
+            ['Manual Insertion Purged Content',    summary.manual_purged_content||0],
+            ['Manual Insertion Purged Hours',      summary.manual_purged_hours||0],
+          ] : []),['',''],
           ['L2V (Live-to-VOD)',''],
           ['L2V Total Content', summary.l2v_content],
           ['L2V Total Hours',   summary.l2v_hours],
           ['L2V Published Content', summary.l2v_published_content||0],
           ['L2V Published Hours',   summary.l2v_published_hours||0],
-          ['L2V Archived Content',  summary.l2v_archived_content||0],
-          ['L2V Archived Hours',    summary.l2v_archived_hours||0],
-          ['L2V Purged Content',    summary.l2v_purged_content||0],
-          ['L2V Purged Hours',      summary.l2v_purged_hours||0],
+          ...(includeArchivedPurged ? [
+            ['L2V Archived Content',  summary.l2v_archived_content||0],
+            ['L2V Archived Hours',    summary.l2v_archived_hours||0],
+            ['L2V Purged Content',    summary.l2v_purged_content||0],
+            ['L2V Purged Hours',      summary.l2v_purged_hours||0],
+          ] : []),
         ]
         const ws1 = XLSX.utils.aoa_to_sheet(s)
         ws1['!cols']=[{wch:42},{wch:18}]
@@ -408,16 +414,6 @@ export default function ContentReportDashboard(){
         <div style={{fontSize:52,marginBottom:12}}>📡</div>
         <h1 style={{fontSize:24,fontWeight:800,color:C.navy,marginBottom:6}}>TM Content Report</h1>
         <p style={{color:C.muted,fontSize:14,marginBottom:28}}>Upload content-report.xlsx to generate the publishing dashboard</p>
-
-        <label style={{display:'flex',alignItems:'center',gap:8,justifyContent:'center',fontSize:13,color:C.navy,marginBottom:16,cursor:'pointer'}}>
-          <input
-            type="checkbox"
-            checked={includeArchivedPurged}
-            onChange={e=>setIncludeArchivedPurged(e.target.checked)}
-            style={{width:15,height:15,cursor:'pointer'}}
-          />
-          Include Archived &amp; Purged breakdown (UI cards + Excel sheets)
-        </label>
 
         <div
           onDrop={onDrop}
@@ -529,7 +525,16 @@ export default function ContentReportDashboard(){
             </span>
           </div>
         </div>
-        <div style={{display:'flex',gap:8}}>
+        <div style={{display:'flex',gap:12,alignItems:'center'}}>
+          <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#fff',cursor:'pointer',whiteSpace:'nowrap'}}>
+            <input
+              type="checkbox"
+              checked={includeArchivedPurged}
+              onChange={e=>setIncludeArchivedPurged(e.target.checked)}
+              style={{width:14,height:14,cursor:'pointer'}}
+            />
+            Include Archived &amp; Purged
+          </label>
           <button onClick={handleDownload} disabled={dlLoading}
             style={{padding:'8px 18px',borderRadius:8,border:'none',background:'#2E75B6',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',opacity:dlLoading?0.7:1}}>
             {dlLoading?'⏳ Downloading...':'⬇ Download Excel'}
@@ -694,10 +699,21 @@ export default function ContentReportDashboard(){
           <>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
               <div style={{fontSize:13,color:C.muted}}>{date_cols.length} days · {date_cols[0]} to {date_cols[date_cols.length-1]}</div>
-              <button onClick={handleDownload} disabled={dlLoading}
-                style={{padding:'7px 16px',borderRadius:7,border:`1px solid ${C.blue}`,background:'#EEF4FF',color:C.blue,fontSize:12,fontWeight:700,cursor:'pointer'}}>
-                {dlLoading?'⏳':'⬇'} Download Excel
-              </button>
+              <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.navy,cursor:'pointer',whiteSpace:'nowrap'}}>
+                  <input
+                    type="checkbox"
+                    checked={includeArchivedPurged}
+                    onChange={e=>setIncludeArchivedPurged(e.target.checked)}
+                    style={{width:14,height:14,cursor:'pointer'}}
+                  />
+                  Include Archived &amp; Purged
+                </label>
+                <button onClick={handleDownload} disabled={dlLoading}
+                  style={{padding:'7px 16px',borderRadius:7,border:`1px solid ${C.blue}`,background:'#EEF4FF',color:C.blue,fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                  {dlLoading?'⏳':'⬇'} Download Excel
+                </button>
+              </div>
             </div>
             <div style={{overflowX:'auto',borderRadius:10,border:`1px solid ${C.border}`,background:C.card}}>
               <table style={{borderCollapse:'collapse',fontSize:12,minWidth:'max-content',width:'100%'}}>
