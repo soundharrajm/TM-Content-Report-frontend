@@ -8,6 +8,7 @@ const API_BASE = import.meta.env.VITE_API_BASE
 const C = {
   navy:'#1F3864',blue:'#2E75B6',teal:'#0D7377',
   amber:'#BF8F00',purple:'#6B35A0',green:'#1E7E34',
+  archived:'#922B21',purged:'#4D4D4D',
   bg:'#F0F4FA',card:'#FFFFFF',border:'#D0DAF0',
   text:'#1a1a2e',muted:'#5a6a8a',
 }
@@ -29,35 +30,41 @@ function parseLocally(rows) {
     const extId    = String(r['External ID']||'')
     const isAiring = extId.startsWith('airing-')
     const ct       = CT_MAP[String(r['Content Type']||'').toLowerCase()] || r['Content Type']
-    const finding  = String(r['Finding']||'')
-    const status   = String(r['Status']||'')
+    const vcs      = String(r['vod_cms_status']||'').trim().toLowerCase()
     const isNoVid  = ['Series','Season'].includes(ct)
-    const isPub    = ['PUBLISHED','READY_TO_PUBLISH'].includes(finding) || status==='processing-not-required'
-    const isManual = !isAiring && finding!=='DRAFT' && isPub
+    const isPub    = vcs === 'published'
+    const isArch   = vcs === 'archived'
+    const isPurged = vcs === 'purged'
+    const isManual = !isAiring && isPub
     const isL2V    = isAiring && isPub
     // Duration: _duration_hrs (hours) OR duration (seconds auto-converted)
     const durHrs = isNoVid ? 0
       : r['_duration_hrs']  ? parseFloat(r['_duration_hrs']||0)
       : r['duration']       ? parseFloat(r['duration']||0) / 3600
       : 0
-    return {...r, date:dateStr, ct, finding, status, isAiring, isPub, isManual, isL2V, durHrs}
+    return {...r, date:dateStr, ct, vcs, isAiring, isPub, isArch, isPurged, isManual, isL2V, durHrs}
   })
 
-  const pub = df.filter(r=>r.isPub)
-  const man = df.filter(r=>r.isManual)
-  const l2v = df.filter(r=>r.isL2V)
+  const pub  = df.filter(r=>r.isPub)
+  const man  = df.filter(r=>r.isManual)
+  const l2v  = df.filter(r=>r.isL2V)
+  const arch = df.filter(r=>r.isArch)
+  const prg  = df.filter(r=>r.isPurged)
   const allDates = [...new Set(df.map(r=>r.date).filter(Boolean))].sort()
   const dateCols  = allDates.map(formatDateCol)
 
   const metrics = ['Total Published Content','Total Published Hours',
-    ...CONTENT_TYPES,'Manual Content','Manual Hours','L2V Content','L2V Hours']
+    ...CONTENT_TYPES,'Manual Content','Manual Hours','L2V Content','L2V Hours',
+    'Archived Content','Archived Hours','Purged Content','Purged Hours']
   const datewise = {}
   metrics.forEach(m=>{datewise[m]={}})
   allDates.forEach((d,i)=>{
     const col    = dateCols[i]
-    const dayPub = pub.filter(r=>r.date===d)
-    const dayMan = man.filter(r=>r.date===d)
-    const dayL2V = l2v.filter(r=>r.date===d)
+    const dayPub  = pub.filter(r=>r.date===d)
+    const dayMan  = man.filter(r=>r.date===d)
+    const dayL2V  = l2v.filter(r=>r.date===d)
+    const dayArch = arch.filter(r=>r.date===d)
+    const dayPrg  = prg.filter(r=>r.date===d)
     datewise['Total Published Content'][col] = dayPub.length
     datewise['Total Published Hours'][col]   = round(dayPub.reduce((s,r)=>s+r.durHrs,0))
     CONTENT_TYPES.forEach(ct=>{datewise[ct][col]=dayPub.filter(r=>r.ct===ct).length})
@@ -65,6 +72,10 @@ function parseLocally(rows) {
     datewise['Manual Hours'][col]   = round(dayMan.reduce((s,r)=>s+r.durHrs,0))
     datewise['L2V Content'][col]    = dayL2V.length
     datewise['L2V Hours'][col]      = round(dayL2V.reduce((s,r)=>s+r.durHrs,0))
+    datewise['Archived Content'][col] = dayArch.length
+    datewise['Archived Hours'][col]   = round(dayArch.reduce((s,r)=>s+r.durHrs,0))
+    datewise['Purged Content'][col]   = dayPrg.length
+    datewise['Purged Hours'][col]     = round(dayPrg.reduce((s,r)=>s+r.durHrs,0))
   })
 
   const byType      = {}
@@ -82,6 +93,8 @@ function parseLocally(rows) {
       by_type: byType, by_type_hours: byTypeHours,
       manual_content: man.length, manual_hours: round(man.reduce((s,r)=>s+r.durHrs,0)),
       l2v_content: l2v.length,   l2v_hours:    round(l2v.reduce((s,r)=>s+r.durHrs,0)),
+      archived_content: arch.length, archived_hours: round(arch.reduce((s,r)=>s+r.durHrs,0)),
+      purged_content:   prg.length,  purged_hours:   round(prg.reduce((s,r)=>s+r.durHrs,0)),
       dvb_content: 0,  dvb_hours: 0,  // placeholder until DVB logic defined
     },
     datewise: Object.keys(datewise[metrics[0]]).length
@@ -253,13 +266,20 @@ export default function ContentReportDashboard(){
         const { summary, datewise, date_cols } = data
         const wb = XLSX.utils.book_new()
         const metrics = ['Total Published Content','Total Published Hours',
-          ...CONTENT_TYPES,'Manual Content','Manual Hours','L2V Content','L2V Hours']
+          ...CONTENT_TYPES,'Manual Content','Manual Hours','L2V Content','L2V Hours',
+          'Archived Content','Archived Hours','Purged Content','Purged Hours']
 
         const s = [
           ['TM Content Publishing Summary',''],['',''],
           ['OVERALL',''],
           ['Total Published Content (All)', summary.total_content],
           ['Total Published Hours (All)',   summary.total_hours],['',''],
+          ['ARCHIVED',''],
+          ['Total Archived Content', summary.archived_content||0],
+          ['Total Archived Hours',   summary.archived_hours||0],['',''],
+          ['PURGED',''],
+          ['Total Purged Content', summary.purged_content||0],
+          ['Total Purged Hours',   summary.purged_hours||0],['',''],
           ['BY CONTENT TYPE',''],
           ...CONTENT_TYPES.flatMap(ct=>[
             [`  ${ct} — Content`, summary.by_type[ct]||0],
@@ -341,8 +361,10 @@ export default function ContentReportDashboard(){
         <div style={{padding:'14px 16px',background:'#FFFBEC',border:'1px solid #F0D060',borderRadius:10,fontSize:12,color:'#7B5700',textAlign:'left'}}>
           <strong>📋 Business Rules:</strong>
           <ul style={{margin:'6px 0 0',paddingLeft:18,lineHeight:1.9}}>
-            <li>Published = PUBLISHED + READY_TO_PUBLISH + processing-not-required</li>
-            <li>Manual = non-airing External ID + not DRAFT + published</li>
+            <li>Published = vod_cms_status is <code>published</code></li>
+            <li>Archived = vod_cms_status is <code>archived</code></li>
+            <li>Purged = vod_cms_status is <code>purged</code></li>
+            <li>Manual = non-airing External ID + published</li>
             <li>L2V = External ID starts with <code>airing-</code> + published</li>
             <li>If file has <code>_duration_hrs</code> → uses it, skips MySQL</li>
             <li>Series/Season duration always = 0</li>
@@ -378,13 +400,15 @@ export default function ContentReportDashboard(){
   const METRICS = [
     {metric:'Total Published Content',group:'overall'},
     {metric:'Total Published Hours',  group:'overall'},
+    {metric:'Archived Content',group:'archived'},{metric:'Archived Hours',group:'archived'},
+    {metric:'Purged Content',group:'purged'},{metric:'Purged Hours',group:'purged'},
     ...CONTENT_TYPES.map(ct=>({metric:ct,group:'type'})),
     {metric:'Manual Content',group:'manual'},{metric:'Manual Hours',group:'manual'},
     {metric:'L2V Content',group:'l2v'},{metric:'L2V Hours',group:'l2v'},
     {metric:'DVB Content',group:'dvb'},{metric:'DVB Hours',group:'dvb'},
   ]
-  const GRP_COLOR={overall:C.blue,type:C.teal,manual:C.amber,l2v:C.purple,dvb:'#0E6655'}
-  const GRP_BG   ={overall:'#EAF1FB',type:'#EEF8EE',manual:'#FFF9EC',l2v:'#F5F0FF',dvb:'#E8F8F5'}
+  const GRP_COLOR={overall:C.blue,type:C.teal,manual:C.amber,l2v:C.purple,dvb:'#0E6655',archived:C.archived,purged:C.purged}
+  const GRP_BG   ={overall:'#EAF1FB',type:'#EEF8EE',manual:'#FFF9EC',l2v:'#F5F0FF',dvb:'#E8F8F5',archived:'#FDEDEC',purged:'#ECECEC'}
 
   return (
     <div style={{minHeight:'100vh',background:C.bg,fontFamily:'system-ui,sans-serif'}}>
@@ -455,6 +479,18 @@ export default function ContentReportDashboard(){
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
               <KpiCard label="Total Published Content" value={summary.total_content} color={C.blue}/>
               <KpiCard label="Total Published Hours"   value={`${summary.total_hours}h`} color={C.blue} sub="from MySQL duration query"/>
+            </div>
+
+            <SecHdr color={C.archived}>Total Archived</SecHdr>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
+              <KpiCard label="Total Archived Content" value={summary.archived_content||0} color={C.archived}/>
+              <KpiCard label="Total Archived Hours"   value={`${summary.archived_hours||0}h`} color={C.archived}/>
+            </div>
+
+            <SecHdr color={C.purged}>Total Purged</SecHdr>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
+              <KpiCard label="Total Purged Content" value={summary.purged_content||0} color={C.purged}/>
+              <KpiCard label="Total Purged Hours"   value={`${summary.purged_hours||0}h`} color={C.purged}/>
             </div>
 
             <SecHdr color={C.teal}>By Content Type</SecHdr>
