@@ -27,13 +27,27 @@ function formatDateCol(iso) {
 const normKey = s => String(s).trim().toLowerCase().replace(/[\s_-]/g,'')
 const CANONICAL_COLUMNS = {
   contentkey:'Content Key', contentid:'Content ID', contenttype:'Content Type',
-  externalid:'external_id', vodcmsstatus:'vod_cms_status', createddate:'Created Date',
+  externalid:'external_id', vodcmsstatus:'vod_cms_status',
   title:'Title', contenttitle:'Title', duration:'duration', durationhrs:'_duration_hrs',
 }
+// Date column: prefer metadata_created_date over created_date if both are present
+const DATE_COLUMN_PRIORITY = ['metadatacreateddate', 'createddate']
+
 function normalizeRow(r) {
   const out = {...r}
-  Object.keys(r).forEach(k=>{
-    const canon = CANONICAL_COLUMNS[normKey(k)]
+  const keys = Object.keys(r)
+  const keyNorms = keys.map(k=>({k, n:normKey(k)}))
+
+  // Date column — pick metadata_created_date first, fall back to created_date
+  for (const candidate of DATE_COLUMN_PRIORITY) {
+    const match = keyNorms.find(({n})=>n===candidate)
+    if (match) { out['Created Date'] = r[match.k]; break }
+  }
+
+  // Everything else
+  keyNorms.forEach(({k,n})=>{
+    if (DATE_COLUMN_PRIORITY.includes(n)) return
+    const canon = CANONICAL_COLUMNS[n]
     if (canon && !(canon in out)) out[canon] = r[k]
   })
   return out
@@ -70,6 +84,9 @@ function parseLocally(rows) {
   const l2vPrg  = df.filter(r=>r.isAiring && r.isPurged)
   const manArch = df.filter(r=>!r.isAiring && r.isArch)
   const manPrg  = df.filter(r=>!r.isAiring && r.isPurged)
+  // Total Published = Manual Insertion Published + L2V Published (explicit sum)
+  const totalContent = man.length + l2vPub.length
+  const totalHours   = round(man.reduce((s,r)=>s+r.durHrs,0) + l2vPub.reduce((s,r)=>s+r.durHrs,0))
   // Total Archived/Purged = Manual + L2V breakdown (explicit sum)
   const archContent = manArch.length + l2vArch.length
   const archHours   = round(manArch.reduce((s,r)=>s+r.durHrs,0) + l2vArch.reduce((s,r)=>s+r.durHrs,0))
@@ -97,8 +114,9 @@ function parseLocally(rows) {
     const dayL2VPrg  = l2vPrg.filter(r=>r.date===d)
     const dayManArch = manArch.filter(r=>r.date===d)
     const dayManPrg  = manPrg.filter(r=>r.date===d)
-    datewise['Total Published Content'][col] = dayPub.length
-    datewise['Total Published Hours'][col]   = round(dayPub.reduce((s,r)=>s+r.durHrs,0))
+    // Total Published per day = Manual Insertion Published + L2V Published (explicit sum)
+    datewise['Total Published Content'][col] = dayMan.length + dayL2VPub.length
+    datewise['Total Published Hours'][col]   = round(dayMan.reduce((s,r)=>s+r.durHrs,0) + dayL2VPub.reduce((s,r)=>s+r.durHrs,0))
     CONTENT_TYPES.forEach(ct=>{datewise[ct][col]=dayPub.filter(r=>r.ct===ct).length})
     datewise['Manual Content'][col] = dayMan.length
     datewise['Manual Hours'][col]   = round(dayMan.reduce((s,r)=>s+r.durHrs,0))
@@ -132,7 +150,7 @@ function parseLocally(rows) {
     duration_source: df.some(r=>r.durHrs>0) ? (rows[0]?.duration && !rows[0]?._duration_hrs ? 'local_file_seconds' : 'local_file') : 'none',
     has_local_duration: df.some(r=>r.durHrs>0),
     summary: {
-      total_content: pub.length, total_hours: round(pub.reduce((s,r)=>s+r.durHrs,0)),
+      total_content: totalContent, total_hours: totalHours,
       by_type: byType, by_type_hours: byTypeHours,
       manual_content: man.length, manual_hours: round(man.reduce((s,r)=>s+r.durHrs,0)),
       manual_archived_content: manArch.length, manual_archived_hours: round(manArch.reduce((s,r)=>s+r.durHrs,0)),
