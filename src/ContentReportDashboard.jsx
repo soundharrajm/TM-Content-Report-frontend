@@ -27,7 +27,7 @@ function formatDateCol(iso) {
 const normKey = s => String(s).trim().toLowerCase().replace(/[\s_-]/g,'')
 const CANONICAL_COLUMNS = {
   contentkey:'Content Key', contentid:'Content ID', contenttype:'Content Type',
-  externalid:'external_id', vodcmsstatus:'vod_cms_status',
+  externalid:'external_id', vodcmsstatus:'vod_cms_status', status:'status',
   title:'Title', contenttitle:'Title', duration:'duration', durationhrs:'_duration_hrs',
 }
 // Date column: prefer metadata_created_date over created_date if both are present
@@ -54,7 +54,17 @@ function normalizeRow(r) {
 }
 
 function parseLocally(rows) {
-  const df = rows.map(rawRow => {
+  // ── Exclude rows where processing failed — not counted anywhere in the report ──
+  const rowsFiltered = rows.filter(rawRow => {
+    const normalized = normalizeRow(rawRow)
+    const statusVal  = String(normalized['status']||'').trim().toLowerCase()
+    return !statusVal.includes('fail')
+  })
+  if (rowsFiltered.length !== rows.length) {
+    console.log(`[Filter] Excluding ${rows.length - rowsFiltered.length} row(s) with failed processing status`)
+  }
+
+  const df = rowsFiltered.map(rawRow => {
     const r = normalizeRow(rawRow)
     const created  = r['Created Date'] ? new Date(r['Created Date']) : null
     const dateStr  = created ? created.toISOString().split('T')[0] : null
