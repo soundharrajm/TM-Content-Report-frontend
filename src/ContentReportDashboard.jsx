@@ -8,7 +8,7 @@ const API_BASE = import.meta.env.VITE_API_BASE
 const C = {
   navy:'#1F3864',blue:'#2E75B6',teal:'#0D7377',
   amber:'#BF8F00',purple:'#6B35A0',green:'#1E7E34',
-  archived:'#922B21',purged:'#4D4D4D',
+  archived:'#922B21',purged:'#4D4D4D',draft:'#B8860B',
   bg:'#F0F4FA',card:'#FFFFFF',border:'#D0DAF0',
   text:'#1a1a2e',muted:'#5a6a8a',
 }
@@ -76,25 +76,28 @@ function parseLocally(rows) {
     const isPub    = vcs === 'published'
     const isArch   = vcs === 'archived'
     const isPurged = vcs === 'purged'
+    const isDraft  = vcs === 'draft'
     const isManual = !isAiring && isPub
-    const isL2V    = isAiring && (isPub || isArch || isPurged)
+    const isL2V    = isAiring && (isPub || isArch || isPurged || isDraft)
     // Duration: _duration_hrs (hours) OR duration (seconds auto-converted)
     const durHrs = isNoVid ? 0
       : r['_duration_hrs']  ? parseFloat(r['_duration_hrs']||0)
       : r['duration']       ? parseFloat(r['duration']||0) / 3600
       : 0
-    return {...r, date:dateStr, ct, vcs, isAiring, isPub, isArch, isPurged, isManual, isL2V, durHrs}
+    return {...r, date:dateStr, ct, vcs, isAiring, isPub, isArch, isPurged, isDraft, isManual, isL2V, durHrs}
   })
 
   const pub  = df.filter(r=>r.isPub)
   const man  = df.filter(r=>r.isManual)              // manual, published only
-  const manTotal = df.filter(r=>!r.isAiring && (r.isPub || r.isArch || r.isPurged))  // mirrors L2V's l2v filter
+  const manTotal = df.filter(r=>!r.isAiring && (r.isPub || r.isArch || r.isPurged || r.isDraft))  // mirrors L2V's l2v filter
   const l2v  = df.filter(r=>r.isL2V)
   const l2vPub  = df.filter(r=>r.isAiring && r.isPub)
   const l2vArch = df.filter(r=>r.isAiring && r.isArch)
   const l2vPrg  = df.filter(r=>r.isAiring && r.isPurged)
+  const l2vDraft = df.filter(r=>r.isAiring && r.isDraft)
   const manArch = df.filter(r=>!r.isAiring && r.isArch)
   const manPrg  = df.filter(r=>!r.isAiring && r.isPurged)
+  const manDraft = df.filter(r=>!r.isAiring && r.isDraft)
   // Total Published = Manual Insertion Published + L2V Published (explicit sum)
   const totalContent = man.length + l2vPub.length
   const totalHours   = round(man.reduce((s,r)=>s+r.durHrs,0) + l2vPub.reduce((s,r)=>s+r.durHrs,0))
@@ -103,17 +106,26 @@ function parseLocally(rows) {
   const archHours   = round(manArch.reduce((s,r)=>s+r.durHrs,0) + l2vArch.reduce((s,r)=>s+r.durHrs,0))
   const prgContent  = manPrg.length + l2vPrg.length
   const prgHours    = round(manPrg.reduce((s,r)=>s+r.durHrs,0) + l2vPrg.reduce((s,r)=>s+r.durHrs,0))
+  const draftContent = manDraft.length + l2vDraft.length
+  const draftHours    = round(manDraft.reduce((s,r)=>s+r.durHrs,0) + l2vDraft.reduce((s,r)=>s+r.durHrs,0))
+  // Known types first (stable order), then any NEW type found in the data
+  // that isn't in CT_MAP/CONTENT_TYPES — so it shows up automatically
+  // instead of being silently excluded.
+  const detectedExtraTypes = [...new Set(df.map(r=>r.ct))]
+    .filter(ct => ct && !CONTENT_TYPES.includes(ct)).sort()
+  const reportTypes = [...CONTENT_TYPES, ...detectedExtraTypes]
   const allDates = [...new Set(df.map(r=>r.date).filter(Boolean))].sort()
   const dateCols  = allDates.map(formatDateCol)
 
   const metrics = ['Total Published Content','Total Published Hours',
-    ...CONTENT_TYPES,'Manual Content','Manual Hours',
+    ...reportTypes,'Manual Content','Manual Hours',
     'Manual Published Content','Manual Published Hours',
     'Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours',
+    'Manual Draft Content','Manual Draft Hours',
     'L2V Content','L2V Hours',
     'L2V Published Content','L2V Published Hours','L2V Archived Content','L2V Archived Hours',
-    'L2V Purged Content','L2V Purged Hours',
-    'Archived Content','Archived Hours','Purged Content','Purged Hours']
+    'L2V Purged Content','L2V Purged Hours','L2V Draft Content','L2V Draft Hours',
+    'Archived Content','Archived Hours','Purged Content','Purged Hours','Draft Content','Draft Hours']
   const datewise = {}
   metrics.forEach(m=>{datewise[m]={}})
   allDates.forEach((d,i)=>{
@@ -127,10 +139,12 @@ function parseLocally(rows) {
     const dayL2VPrg  = l2vPrg.filter(r=>r.date===d)
     const dayManArch = manArch.filter(r=>r.date===d)
     const dayManPrg  = manPrg.filter(r=>r.date===d)
+    const dayManDraft = manDraft.filter(r=>r.date===d)
+    const dayL2VDraft = l2vDraft.filter(r=>r.date===d)
     // Total Published per day = Manual Insertion Published + L2V Published (explicit sum)
     datewise['Total Published Content'][col] = dayMan.length + dayL2VPub.length
     datewise['Total Published Hours'][col]   = round(dayMan.reduce((s,r)=>s+r.durHrs,0) + dayL2VPub.reduce((s,r)=>s+r.durHrs,0))
-    CONTENT_TYPES.forEach(ct=>{datewise[ct][col]=dayPub.filter(r=>r.ct===ct).length})
+    reportTypes.forEach(ct=>{datewise[ct][col]=dayPub.filter(r=>r.ct===ct).length})
     // Manual Insertion — mirrors L2V's structure: total (any status), then published/archived/purged
     datewise['Manual Content'][col] = dayManTotal.length
     datewise['Manual Hours'][col]   = round(dayManTotal.reduce((s,r)=>s+r.durHrs,0))
@@ -140,6 +154,8 @@ function parseLocally(rows) {
     datewise['Manual Archived Hours'][col]   = round(dayManArch.reduce((s,r)=>s+r.durHrs,0))
     datewise['Manual Purged Content'][col]   = dayManPrg.length
     datewise['Manual Purged Hours'][col]     = round(dayManPrg.reduce((s,r)=>s+r.durHrs,0))
+    datewise['Manual Draft Content'][col]    = dayManDraft.length
+    datewise['Manual Draft Hours'][col]      = round(dayManDraft.reduce((s,r)=>s+r.durHrs,0))
     datewise['L2V Content'][col]    = dayL2V.length
     datewise['L2V Hours'][col]      = round(dayL2V.reduce((s,r)=>s+r.durHrs,0))
     datewise['L2V Published Content'][col] = dayL2VPub.length
@@ -148,16 +164,20 @@ function parseLocally(rows) {
     datewise['L2V Archived Hours'][col]    = round(dayL2VArch.reduce((s,r)=>s+r.durHrs,0))
     datewise['L2V Purged Content'][col]    = dayL2VPrg.length
     datewise['L2V Purged Hours'][col]      = round(dayL2VPrg.reduce((s,r)=>s+r.durHrs,0))
-    // Total Archived/Purged per day = Manual + L2V breakdown (explicit sum)
+    datewise['L2V Draft Content'][col]     = dayL2VDraft.length
+    datewise['L2V Draft Hours'][col]       = round(dayL2VDraft.reduce((s,r)=>s+r.durHrs,0))
+    // Total Archived/Purged/Draft per day = Manual + L2V breakdown (explicit sum)
     datewise['Archived Content'][col] = dayManArch.length + dayL2VArch.length
     datewise['Archived Hours'][col]   = round(dayManArch.reduce((s,r)=>s+r.durHrs,0) + dayL2VArch.reduce((s,r)=>s+r.durHrs,0))
     datewise['Purged Content'][col]   = dayManPrg.length + dayL2VPrg.length
     datewise['Purged Hours'][col]     = round(dayManPrg.reduce((s,r)=>s+r.durHrs,0) + dayL2VPrg.reduce((s,r)=>s+r.durHrs,0))
+    datewise['Draft Content'][col]    = dayManDraft.length + dayL2VDraft.length
+    datewise['Draft Hours'][col]      = round(dayManDraft.reduce((s,r)=>s+r.durHrs,0) + dayL2VDraft.reduce((s,r)=>s+r.durHrs,0))
   })
 
   const byType      = {}
   const byTypeHours = {}
-  CONTENT_TYPES.forEach(ct=>{
+  reportTypes.forEach(ct=>{
     byType[ct]      = pub.filter(r=>r.ct===ct).length
     byTypeHours[ct] = round(pub.filter(r=>r.ct===ct).reduce((s,r)=>s+r.durHrs,0))
   })
@@ -172,12 +192,15 @@ function parseLocally(rows) {
       manual_published_content: man.length, manual_published_hours: round(man.reduce((s,r)=>s+r.durHrs,0)),
       manual_archived_content: manArch.length, manual_archived_hours: round(manArch.reduce((s,r)=>s+r.durHrs,0)),
       manual_purged_content:   manPrg.length,  manual_purged_hours:   round(manPrg.reduce((s,r)=>s+r.durHrs,0)),
+      manual_draft_content:    manDraft.length, manual_draft_hours:   round(manDraft.reduce((s,r)=>s+r.durHrs,0)),
       l2v_content: l2v.length,   l2v_hours:    round(l2v.reduce((s,r)=>s+r.durHrs,0)),
       l2v_published_content: l2vPub.length,  l2v_published_hours: round(l2vPub.reduce((s,r)=>s+r.durHrs,0)),
       l2v_archived_content:  l2vArch.length, l2v_archived_hours:  round(l2vArch.reduce((s,r)=>s+r.durHrs,0)),
       l2v_purged_content:    l2vPrg.length,  l2v_purged_hours:    round(l2vPrg.reduce((s,r)=>s+r.durHrs,0)),
+      l2v_draft_content:     l2vDraft.length, l2v_draft_hours:    round(l2vDraft.reduce((s,r)=>s+r.durHrs,0)),
       archived_content: archContent, archived_hours: archHours,
       purged_content:   prgContent,  purged_hours:   prgHours,
+      draft_content:    draftContent, draft_hours:   draftHours,
       dvb_content: 0,  dvb_hours: 0,  // placeholder until DVB logic defined
     },
     datewise: Object.keys(datewise[metrics[0]]).length
@@ -220,11 +243,30 @@ export default function ContentReportDashboard(){
   const [apiBase,setApiBase]   = useState(API_BASE)
   const [showApi,setShowApi]   = useState(false)
   const [includeArchivedPurged, setIncludeArchivedPurged] = useState(true)
+  const [projects, setProjects] = useState([])
+  const [projectId, setProjectId] = useState('default')
+  const [projectsError, setProjectsError] = useState(null)
+
+  // Load available projects (each with its own DB config) for the dropdown
+  useEffect(() => {
+    fetch(`${apiBase}/projects`, {headers:{'ngrok-skip-browser-warning':'1'}})
+      .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json() })
+      .then(json => {
+        setProjects(json.projects || [])
+        if (json.projects?.length && !json.projects.some(p => p.id === projectId)) {
+          setProjectId(json.projects[0].id)
+        }
+        setProjectsError(null)
+      })
+      .catch(e => setProjectsError(`Could not load projects: ${e.message}`))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBase])
 
   const uploadToBackend = async (file) => {
     const form = new FormData()
     form.append('file', file)
     form.append('include_archived_purged', includeArchivedPurged ? 'true' : 'false')
+    form.append('project_id', projectId)
     const res = await fetch(`${apiBase}/generate`, {method:'POST', body:form, headers:{'ngrok-skip-browser-warning':'1'}})
     if (!res.ok) throw new Error(`Backend error: ${res.status}`)
     return res.json()
@@ -350,13 +392,14 @@ export default function ContentReportDashboard(){
         // Backend not available — generate Excel locally from parsed data
         const { summary, datewise, date_cols } = data
         const wb = XLSX.utils.book_new()
+        const reportTypes = Object.keys(summary.by_type || {}).length ? Object.keys(summary.by_type) : CONTENT_TYPES
         const metrics = ['Total Published Content','Total Published Hours',
-          ...CONTENT_TYPES,'Manual Content','Manual Hours','Manual Published Content','Manual Published Hours',
-          ...(includeArchivedPurged ? ['Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours'] : []),
+          ...reportTypes,'Manual Content','Manual Hours','Manual Published Content','Manual Published Hours',
+          ...(includeArchivedPurged ? ['Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours','Manual Draft Content','Manual Draft Hours'] : []),
           'L2V Content','L2V Hours',
           'L2V Published Content','L2V Published Hours',
-          ...(includeArchivedPurged ? ['L2V Archived Content','L2V Archived Hours','L2V Purged Content','L2V Purged Hours'] : []),
-          ...(includeArchivedPurged ? ['Archived Content','Archived Hours','Purged Content','Purged Hours'] : [])]
+          ...(includeArchivedPurged ? ['L2V Archived Content','L2V Archived Hours','L2V Purged Content','L2V Purged Hours','L2V Draft Content','L2V Draft Hours'] : []),
+          ...(includeArchivedPurged ? ['Archived Content','Archived Hours','Purged Content','Purged Hours','Draft Content','Draft Hours'] : [])]
 
         const s = [
           ['TM Content Publishing Summary',''],['',''],
@@ -370,9 +413,12 @@ export default function ContentReportDashboard(){
             ['PURGED',''],
             ['Total Purged Content', summary.purged_content||0],
             ['Total Purged Hours',   summary.purged_hours||0],['',''],
+            ['DRAFT',''],
+            ['Total Draft Content', summary.draft_content||0],
+            ['Total Draft Hours',   summary.draft_hours||0],['',''],
           ] : []),
           ['BY CONTENT TYPE',''],
-          ...CONTENT_TYPES.flatMap(ct=>[
+          ...reportTypes.flatMap(ct=>[
             [`  ${ct} — Content`, summary.by_type[ct]||0],
             [`  ${ct} — Hours`,   summary.by_type_hours?.[ct]||0],
           ]),['',''],
@@ -386,6 +432,8 @@ export default function ContentReportDashboard(){
             ['Manual Insertion Archived Hours',    summary.manual_archived_hours||0],
             ['Manual Insertion Purged Content',    summary.manual_purged_content||0],
             ['Manual Insertion Purged Hours',      summary.manual_purged_hours||0],
+            ['Manual Insertion Draft Content',     summary.manual_draft_content||0],
+            ['Manual Insertion Draft Hours',       summary.manual_draft_hours||0],
           ] : []),['',''],
           ['L2V (Live-to-VOD)',''],
           ['L2V Total Content', summary.l2v_content],
@@ -397,6 +445,8 @@ export default function ContentReportDashboard(){
             ['L2V Archived Hours',    summary.l2v_archived_hours||0],
             ['L2V Purged Content',    summary.l2v_purged_content||0],
             ['L2V Purged Hours',      summary.l2v_purged_hours||0],
+            ['L2V Draft Content',     summary.l2v_draft_content||0],
+            ['L2V Draft Hours',       summary.l2v_draft_hours||0],
           ] : []),
         ]
         const ws1 = XLSX.utils.aoa_to_sheet(s)
@@ -433,6 +483,23 @@ export default function ContentReportDashboard(){
         <div style={{fontSize:52,marginBottom:12}}>📡</div>
         <h1 style={{fontSize:24,fontWeight:800,color:C.navy,marginBottom:6}}>TM Content Report</h1>
         <p style={{color:C.muted,fontSize:14,marginBottom:28}}>Upload content-report.xlsx to generate the publishing dashboard</p>
+
+        {/* Project selector — each project has its own separate DB config for duration lookups */}
+        <div style={{marginBottom:16,textAlign:'left'}}>
+          <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>Project</label>
+          <select
+            value={projectId}
+            onChange={e=>setProjectId(e.target.value)}
+            style={{width:'100%',padding:'10px 12px',borderRadius:10,border:`1.5px solid ${C.border}`,
+              background:C.card,color:C.navy,fontSize:14,fontWeight:600,outline:'none',boxSizing:'border-box'}}
+          >
+            {projects.length === 0 && <option value="default">default</option>}
+            {projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          {projectsError && (
+            <p style={{fontSize:11,color:C.red||'#c0392b',marginTop:4}}>⚠️ {projectsError} — using "default"</p>
+          )}
+        </div>
 
         <div
           onDrop={onDrop}
@@ -504,24 +571,28 @@ export default function ContentReportDashboard(){
 
   if (!data) return null
   const {summary,datewise,date_cols,duration_source,has_local_duration} = data
+  const reportTypes = Object.keys(summary?.by_type || {}).length ? Object.keys(summary.by_type) : CONTENT_TYPES
   const METRICS = [
     {metric:'Total Published Content',group:'overall'},
     {metric:'Total Published Hours',  group:'overall'},
     {metric:'Archived Content',group:'archived'},{metric:'Archived Hours',group:'archived'},
     {metric:'Purged Content',group:'purged'},{metric:'Purged Hours',group:'purged'},
-    ...CONTENT_TYPES.map(ct=>({metric:ct,group:'type'})),
+    {metric:'Draft Content',group:'draft'},{metric:'Draft Hours',group:'draft'},
+    ...reportTypes.map(ct=>({metric:ct,group:'type'})),
     {metric:'Manual Content',group:'manual'},{metric:'Manual Hours',group:'manual'},
     {metric:'Manual Published Content',group:'manual'},{metric:'Manual Published Hours',group:'manual'},
     {metric:'Manual Archived Content',group:'manual'},{metric:'Manual Archived Hours',group:'manual'},
     {metric:'Manual Purged Content',group:'manual'},{metric:'Manual Purged Hours',group:'manual'},
+    {metric:'Manual Draft Content',group:'manual'},{metric:'Manual Draft Hours',group:'manual'},
     {metric:'L2V Content',group:'l2v'},{metric:'L2V Hours',group:'l2v'},
     {metric:'L2V Published Content',group:'l2v'},{metric:'L2V Published Hours',group:'l2v'},
     {metric:'L2V Archived Content',group:'l2v'},{metric:'L2V Archived Hours',group:'l2v'},
     {metric:'L2V Purged Content',group:'l2v'},{metric:'L2V Purged Hours',group:'l2v'},
+    {metric:'L2V Draft Content',group:'l2v'},{metric:'L2V Draft Hours',group:'l2v'},
     {metric:'DVB Content',group:'dvb'},{metric:'DVB Hours',group:'dvb'},
   ]
-  const GRP_COLOR={overall:C.blue,type:C.teal,manual:C.amber,l2v:C.purple,dvb:'#0E6655',archived:C.archived,purged:C.purged}
-  const GRP_BG   ={overall:'#EAF1FB',type:'#EEF8EE',manual:'#FFF9EC',l2v:'#F5F0FF',dvb:'#E8F8F5',archived:'#FDEDEC',purged:'#ECECEC'}
+  const GRP_COLOR={overall:C.blue,type:C.teal,manual:C.amber,l2v:C.purple,dvb:'#0E6655',archived:C.archived,purged:C.purged,draft:C.draft}
+  const GRP_BG   ={overall:'#EAF1FB',type:'#EEF8EE',manual:'#FFF9EC',l2v:'#F5F0FF',dvb:'#E8F8F5',archived:'#FDEDEC',purged:'#ECECEC',draft:'#FCF3CF'}
 
   return (
     <div style={{minHeight:'100vh',background:C.bg,fontFamily:'system-ui,sans-serif'}}>
@@ -616,15 +687,21 @@ export default function ContentReportDashboard(){
                   <KpiCard label="Total Purged Content" value={summary.purged_content||0} color={C.purged}/>
                   <KpiCard label="Total Purged Hours"   value={`${summary.purged_hours||0}h`} color={C.purged}/>
                 </div>
+
+                <SecHdr color={C.draft}>Total Draft</SecHdr>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
+                  <KpiCard label="Total Draft Content" value={summary.draft_content||0} color={C.draft}/>
+                  <KpiCard label="Total Draft Hours"   value={`${summary.draft_hours||0}h`} color={C.draft}/>
+                </div>
               </>
             )}
 
             <SecHdr color={C.teal}>By Content Type</SecHdr>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:12}}>
-              {CONTENT_TYPES.map((ct,i)=>{
+              {reportTypes.map((ct,i)=>{
                 const colors=[C.teal,C.blue,C.purple,C.amber,'#2980B9',C.green]
                 return <KpiCard key={ct} label={ct} value={summary.by_type[ct]||0}
-                  hours={summary.by_type_hours?.[ct]||0} color={colors[i]}/>
+                  hours={summary.by_type_hours?.[ct]||0} color={colors[i % colors.length]}/>
               })}
             </div>
 
@@ -649,6 +726,10 @@ export default function ContentReportDashboard(){
                       <KpiCard label="Purged — Content" value={summary.manual_purged_content||0} color={C.amber}/>
                       <KpiCard label="Purged — Hours" value={`${summary.manual_purged_hours||0}h`} color={C.amber}/>
                     </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                      <KpiCard label="Draft — Content" value={summary.manual_draft_content||0} color={C.amber}/>
+                      <KpiCard label="Draft — Hours" value={`${summary.manual_draft_hours||0}h`} color={C.amber}/>
+                    </div>
                   </>
                 )}
               </div>
@@ -671,6 +752,10 @@ export default function ContentReportDashboard(){
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
                       <KpiCard label="Purged — Content" value={summary.l2v_purged_content||0} color={C.purple}/>
                       <KpiCard label="Purged — Hours" value={`${summary.l2v_purged_hours||0}h`} color={C.purple}/>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                      <KpiCard label="Draft — Content" value={summary.l2v_draft_content||0} color={C.purple}/>
+                      <KpiCard label="Draft — Hours" value={`${summary.l2v_draft_hours||0}h`} color={C.purple}/>
                     </div>
                   </>
                 )}
@@ -697,7 +782,7 @@ export default function ContentReportDashboard(){
                 <tbody>
                   {[
                     {label:'Total Published',ct:null,group:'overall'},
-                    ...CONTENT_TYPES.map(ct=>({label:`  ${ct}`,ct,group:'type'})),
+                    ...reportTypes.map(ct=>({label:`  ${ct}`,ct,group:'type'})),
                   ].map((row,i)=>{
                     const pub_ct = row.ct ? summary.by_type[row.ct]||0 : summary.total_content
                     const hrs_ct = row.ct ? summary.by_type_hours?.[row.ct]||0 : summary.total_hours
