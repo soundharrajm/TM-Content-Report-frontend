@@ -225,7 +225,13 @@ export default function ContentReportDashboard(){
         const url  = URL.createObjectURL(blob)
         const a    = document.createElement('a')
         a.href     = url
-        a.download = `TM_Content_Report_${new Date().toISOString().split('T')[0]}.xlsx`
+        // Read the actual filename the backend computed (project-label-based)
+        // from Content-Disposition — fetch()+blob() does NOT use this header
+        // automatically the way a direct browser navigation would, so it has
+        // to be parsed out manually or every download falls back to a fixed name.
+        const cd = res.headers.get('Content-Disposition') || ''
+        const match = cd.match(/filename="?([^";]+)"?/)
+        a.download = match ? match[1] : `Content_Report_${new Date().toISOString().split('T')[0]}.xlsx`
         a.click()
         URL.revokeObjectURL(url)
       } else {
