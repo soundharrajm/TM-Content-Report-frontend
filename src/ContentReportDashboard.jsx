@@ -374,23 +374,24 @@ export default function ContentReportDashboard(){
   ]
   const GRP_COLOR={overall:C.blue,type:C.teal,manual:C.amber,l2v:C.purple,dvb:'#0E6655',archived:C.archived,purged:C.purged,draft:C.draft}
   const GRP_BG   ={overall:'#EAF1FB',type:'#EEF8EE',manual:'#FFF9EC',l2v:'#F5F0FF',dvb:'#E8F8F5',archived:'#FDEDEC',purged:'#ECECEC',draft:'#FCF3CF'}
+  const currentProjectLabel = projects.find(p => p.id === (data.project_id || projectId))?.label || projectId
 
   return (
     <div style={{minHeight:'100vh',background:C.bg,fontFamily:'system-ui,sans-serif'}}>
       {/* Header */}
       <div style={{background:C.navy,color:'#fff',padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
         <div>
-          <div style={{fontSize:17,fontWeight:800}}>📡 TM Content Publishing Report</div>
+          <div style={{fontSize:17,fontWeight:800}}>📡 {currentProjectLabel} Content Publishing Report</div>
           <div style={{fontSize:12,opacity:0.7,marginTop:2}}>
             {date_cols[0]} – {date_cols[date_cols.length-1]} &nbsp;·&nbsp;
             {summary.total_content} published &nbsp;·&nbsp;
             {summary.total_hours}h total &nbsp;·&nbsp;
             <span style={{
-              background: duration_source==='mysql'?'rgba(16,185,129,0.3)':
+              background: (duration_source==='mysql'||duration_source==='mysql_direct')?'rgba(16,185,129,0.3)':
                           duration_source==='local_file'?'rgba(59,130,246,0.3)':'rgba(245,158,11,0.3)',
               borderRadius:4, padding:'1px 7px', fontSize:11
             }}>
-              {duration_source==='mysql'?'⚡ Duration from MySQL':
+              {(duration_source==='mysql'||duration_source==='mysql_direct')?'⚡ Duration from MySQL':
                duration_source==='local_file_seconds'?'📂 Duration from file (sec→hrs)':
                duration_source==='local_file'?'📂 Duration from file':
                '⚠ Duration unavailable'}
