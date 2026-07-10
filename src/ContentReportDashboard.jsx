@@ -1,235 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react"
 import * as XLSX from "xlsx"
-
-// ── Config ────────────────────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_BASE
-  || 'https://womanless-spent-scale.ngrok-free.dev'
-
-const C = {
-  navy:'#1F3864',blue:'#2E75B6',teal:'#0D7377',
-  amber:'#BF8F00',purple:'#6B35A0',green:'#1E7E34',
-  archived:'#922B21',purged:'#4D4D4D',draft:'#B8860B',
-  bg:'#F0F4FA',card:'#FFFFFF',border:'#D0DAF0',
-  text:'#1a1a2e',muted:'#5a6a8a',
-}
-const CONTENT_TYPES = ['Movie','Event','Trailer','Series','Season','Episode']
-
-// ── Fallback: parse locally if backend unavailable ─────────────────────────
-const CT_MAP = {tvepisode:'Episode',movie:'Movie',trailer:'Trailer',event:'Event',tvseries:'Series',tvseason:'Season'}
-const round = (v,dp=2) => Math.round(v*10**dp)/10**dp
-
-function formatDateCol(iso) {
-  const d = new Date(iso+'T00:00:00')
-  return `${d.getDate()}-${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]}`
-}
-
-// ── Column normalization — case & separator insensitive ────────────────────────
-const normKey = s => String(s).trim().toLowerCase().replace(/[\s_-]/g,'')
-const CANONICAL_COLUMNS = {
-  contentkey:'Content Key', contentid:'Content ID', contenttype:'Content Type',
-  externalid:'external_id', vodcmsstatus:'vod_cms_status', status:'status',
-  title:'Title', contenttitle:'Title', duration:'duration', durationhrs:'_duration_hrs',
-}
-// Date column: prefer metadata_created_date over created_date if both are present
-const DATE_COLUMN_PRIORITY = ['metadatacreateddate', 'createddate']
-
-function normalizeRow(r) {
-  const out = {...r}
-  const keys = Object.keys(r)
-  const keyNorms = keys.map(k=>({k, n:normKey(k)}))
-
-  // Date column — pick metadata_created_date first, fall back to created_date
-  for (const candidate of DATE_COLUMN_PRIORITY) {
-    const match = keyNorms.find(({n})=>n===candidate)
-    if (match) { out['Created Date'] = r[match.k]; break }
-  }
-
-  // Everything else
-  keyNorms.forEach(({k,n})=>{
-    if (DATE_COLUMN_PRIORITY.includes(n)) return
-    const canon = CANONICAL_COLUMNS[n]
-    if (canon && !(canon in out)) out[canon] = r[k]
-  })
-  return out
-}
-
-function parseLocally(rows) {
-  // ── Exclude rows where processing failed — not counted anywhere in the report ──
-  const rowsFiltered = rows.filter(rawRow => {
-    const normalized = normalizeRow(rawRow)
-    const statusVal  = String(normalized['status']||'').trim().toLowerCase()
-    return !statusVal.includes('fail')
-  })
-  if (rowsFiltered.length !== rows.length) {
-    console.log(`[Filter] Excluding ${rows.length - rowsFiltered.length} row(s) with failed processing status`)
-  }
-
-  const df = rowsFiltered.map(rawRow => {
-    const r = normalizeRow(rawRow)
-    const created  = r['Created Date'] ? new Date(r['Created Date']) : null
-    const dateStr  = created ? created.toISOString().split('T')[0] : null
-    const extId    = String(r['external_id']||'').trim().toLowerCase()
-    const isAiring = extId.startsWith('airing-')
-    const ct       = CT_MAP[String(r['Content Type']||'').toLowerCase()] || r['Content Type']
-    const vcs      = String(r['vod_cms_status']||'').trim().toLowerCase()
-    const isNoVid  = ['Series','Season'].includes(ct)
-    const isPub    = vcs === 'published'
-    const isArch   = vcs === 'archived'
-    const isPurged = vcs === 'purged'
-    const isDraft  = vcs === 'draft'
-    const isManual = !isAiring && isPub
-    const isL2V    = isAiring && (isPub || isArch || isPurged || isDraft)
-    // Duration: _duration_hrs (hours) OR duration (seconds auto-converted)
-    const durHrs = isNoVid ? 0
-      : r['_duration_hrs']  ? parseFloat(r['_duration_hrs']||0)
-      : r['duration']       ? parseFloat(r['duration']||0) / 3600
-      : 0
-    return {...r, date:dateStr, ct, vcs, isAiring, isPub, isArch, isPurged, isDraft, isManual, isL2V, durHrs}
-  })
-
-  const pub  = df.filter(r=>r.isPub)
-  const man  = df.filter(r=>r.isManual)              // manual, published only
-  const manTotal = df.filter(r=>!r.isAiring && (r.isPub || r.isArch || r.isPurged || r.isDraft))  // mirrors L2V's l2v filter
-  const l2v  = df.filter(r=>r.isL2V)
-  const l2vPub  = df.filter(r=>r.isAiring && r.isPub)
-  const l2vArch = df.filter(r=>r.isAiring && r.isArch)
-  const l2vPrg  = df.filter(r=>r.isAiring && r.isPurged)
-  const l2vDraft = df.filter(r=>r.isAiring && r.isDraft)
-  const manArch = df.filter(r=>!r.isAiring && r.isArch)
-  const manPrg  = df.filter(r=>!r.isAiring && r.isPurged)
-  const manDraft = df.filter(r=>!r.isAiring && r.isDraft)
-  // Total Published = Manual Insertion Published + L2V Published (explicit sum)
-  const totalContent = man.length + l2vPub.length
-  const totalHours   = round(man.reduce((s,r)=>s+r.durHrs,0) + l2vPub.reduce((s,r)=>s+r.durHrs,0))
-  // Total Archived/Purged = Manual + L2V breakdown (explicit sum)
-  const archContent = manArch.length + l2vArch.length
-  const archHours   = round(manArch.reduce((s,r)=>s+r.durHrs,0) + l2vArch.reduce((s,r)=>s+r.durHrs,0))
-  const prgContent  = manPrg.length + l2vPrg.length
-  const prgHours    = round(manPrg.reduce((s,r)=>s+r.durHrs,0) + l2vPrg.reduce((s,r)=>s+r.durHrs,0))
-  const draftContent = manDraft.length + l2vDraft.length
-  const draftHours    = round(manDraft.reduce((s,r)=>s+r.durHrs,0) + l2vDraft.reduce((s,r)=>s+r.durHrs,0))
-  // Known types first (stable order), then any NEW type found in the data
-  // that isn't in CT_MAP/CONTENT_TYPES — so it shows up automatically
-  // instead of being silently excluded.
-  const detectedExtraTypes = [...new Set(df.map(r=>r.ct))]
-    .filter(ct => ct && !CONTENT_TYPES.includes(ct)).sort()
-  const reportTypes = [...CONTENT_TYPES, ...detectedExtraTypes]
-  const allDates = [...new Set(df.map(r=>r.date).filter(Boolean))].sort()
-  const dateCols  = allDates.map(formatDateCol)
-
-  const metrics = ['Total Published Content','Total Published Hours',
-    ...reportTypes,'Manual Content','Manual Hours',
-    'Manual Published Content','Manual Published Hours',
-    'Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours',
-    'Manual Draft Content','Manual Draft Hours',
-    'L2V Content','L2V Hours',
-    'L2V Published Content','L2V Published Hours','L2V Archived Content','L2V Archived Hours',
-    'L2V Purged Content','L2V Purged Hours','L2V Draft Content','L2V Draft Hours',
-    'Archived Content','Archived Hours','Purged Content','Purged Hours','Draft Content','Draft Hours']
-  const datewise = {}
-  metrics.forEach(m=>{datewise[m]={}})
-  allDates.forEach((d,i)=>{
-    const col    = dateCols[i]
-    const dayPub  = pub.filter(r=>r.date===d)
-    const dayMan  = man.filter(r=>r.date===d)
-    const dayManTotal = manTotal.filter(r=>r.date===d)
-    const dayL2V  = l2v.filter(r=>r.date===d)
-    const dayL2VPub  = l2vPub.filter(r=>r.date===d)
-    const dayL2VArch = l2vArch.filter(r=>r.date===d)
-    const dayL2VPrg  = l2vPrg.filter(r=>r.date===d)
-    const dayManArch = manArch.filter(r=>r.date===d)
-    const dayManPrg  = manPrg.filter(r=>r.date===d)
-    const dayManDraft = manDraft.filter(r=>r.date===d)
-    const dayL2VDraft = l2vDraft.filter(r=>r.date===d)
-    // Total Published per day = Manual Insertion Published + L2V Published (explicit sum)
-    datewise['Total Published Content'][col] = dayMan.length + dayL2VPub.length
-    datewise['Total Published Hours'][col]   = round(dayMan.reduce((s,r)=>s+r.durHrs,0) + dayL2VPub.reduce((s,r)=>s+r.durHrs,0))
-    reportTypes.forEach(ct=>{datewise[ct][col]=dayPub.filter(r=>r.ct===ct).length})
-    // Manual Insertion — mirrors L2V's structure: total (any status), then published/archived/purged
-    datewise['Manual Content'][col] = dayManTotal.length
-    datewise['Manual Hours'][col]   = round(dayManTotal.reduce((s,r)=>s+r.durHrs,0))
-    datewise['Manual Published Content'][col] = dayMan.length
-    datewise['Manual Published Hours'][col]   = round(dayMan.reduce((s,r)=>s+r.durHrs,0))
-    datewise['Manual Archived Content'][col] = dayManArch.length
-    datewise['Manual Archived Hours'][col]   = round(dayManArch.reduce((s,r)=>s+r.durHrs,0))
-    datewise['Manual Purged Content'][col]   = dayManPrg.length
-    datewise['Manual Purged Hours'][col]     = round(dayManPrg.reduce((s,r)=>s+r.durHrs,0))
-    datewise['Manual Draft Content'][col]    = dayManDraft.length
-    datewise['Manual Draft Hours'][col]      = round(dayManDraft.reduce((s,r)=>s+r.durHrs,0))
-    datewise['L2V Content'][col]    = dayL2V.length
-    datewise['L2V Hours'][col]      = round(dayL2V.reduce((s,r)=>s+r.durHrs,0))
-    datewise['L2V Published Content'][col] = dayL2VPub.length
-    datewise['L2V Published Hours'][col]   = round(dayL2VPub.reduce((s,r)=>s+r.durHrs,0))
-    datewise['L2V Archived Content'][col]  = dayL2VArch.length
-    datewise['L2V Archived Hours'][col]    = round(dayL2VArch.reduce((s,r)=>s+r.durHrs,0))
-    datewise['L2V Purged Content'][col]    = dayL2VPrg.length
-    datewise['L2V Purged Hours'][col]      = round(dayL2VPrg.reduce((s,r)=>s+r.durHrs,0))
-    datewise['L2V Draft Content'][col]     = dayL2VDraft.length
-    datewise['L2V Draft Hours'][col]       = round(dayL2VDraft.reduce((s,r)=>s+r.durHrs,0))
-    // Total Archived/Purged/Draft per day = Manual + L2V breakdown (explicit sum)
-    datewise['Archived Content'][col] = dayManArch.length + dayL2VArch.length
-    datewise['Archived Hours'][col]   = round(dayManArch.reduce((s,r)=>s+r.durHrs,0) + dayL2VArch.reduce((s,r)=>s+r.durHrs,0))
-    datewise['Purged Content'][col]   = dayManPrg.length + dayL2VPrg.length
-    datewise['Purged Hours'][col]     = round(dayManPrg.reduce((s,r)=>s+r.durHrs,0) + dayL2VPrg.reduce((s,r)=>s+r.durHrs,0))
-    datewise['Draft Content'][col]    = dayManDraft.length + dayL2VDraft.length
-    datewise['Draft Hours'][col]      = round(dayManDraft.reduce((s,r)=>s+r.durHrs,0) + dayL2VDraft.reduce((s,r)=>s+r.durHrs,0))
-  })
-
-  const byType      = {}
-  const byTypeHours = {}
-  reportTypes.forEach(ct=>{
-    byType[ct]      = pub.filter(r=>r.ct===ct).length
-    byTypeHours[ct] = round(pub.filter(r=>r.ct===ct).reduce((s,r)=>s+r.durHrs,0))
-  })
-
-  return {
-    duration_source: df.some(r=>r.durHrs>0) ? (rows[0]?.duration && !rows[0]?._duration_hrs ? 'local_file_seconds' : 'local_file') : 'none',
-    has_local_duration: df.some(r=>r.durHrs>0),
-    summary: {
-      total_content: totalContent, total_hours: totalHours,
-      by_type: byType, by_type_hours: byTypeHours,
-      manual_content: manTotal.length, manual_hours: round(manTotal.reduce((s,r)=>s+r.durHrs,0)),
-      manual_published_content: man.length, manual_published_hours: round(man.reduce((s,r)=>s+r.durHrs,0)),
-      manual_archived_content: manArch.length, manual_archived_hours: round(manArch.reduce((s,r)=>s+r.durHrs,0)),
-      manual_purged_content:   manPrg.length,  manual_purged_hours:   round(manPrg.reduce((s,r)=>s+r.durHrs,0)),
-      manual_draft_content:    manDraft.length, manual_draft_hours:   round(manDraft.reduce((s,r)=>s+r.durHrs,0)),
-      l2v_content: l2v.length,   l2v_hours:    round(l2v.reduce((s,r)=>s+r.durHrs,0)),
-      l2v_published_content: l2vPub.length,  l2v_published_hours: round(l2vPub.reduce((s,r)=>s+r.durHrs,0)),
-      l2v_archived_content:  l2vArch.length, l2v_archived_hours:  round(l2vArch.reduce((s,r)=>s+r.durHrs,0)),
-      l2v_purged_content:    l2vPrg.length,  l2v_purged_hours:    round(l2vPrg.reduce((s,r)=>s+r.durHrs,0)),
-      l2v_draft_content:     l2vDraft.length, l2v_draft_hours:    round(l2vDraft.reduce((s,r)=>s+r.durHrs,0)),
-      archived_content: archContent, archived_hours: archHours,
-      purged_content:   prgContent,  purged_hours:   prgHours,
-      draft_content:    draftContent, draft_hours:   draftHours,
-      dvb_content: 0,  dvb_hours: 0,  // placeholder until DVB logic defined
-    },
-    datewise: Object.keys(datewise[metrics[0]]).length
-      ? metrics.map(m=>({Metric:m,...datewise[m],Total:round(Object.values(datewise[m]).reduce((a,b)=>a+b,0))}))
-      : [],
-    date_cols: dateCols,
-    download_ready: false,
-  }
-}
-
-// ── Components ────────────────────────────────────────────────────────────────
-function KpiCard({label,value,sub,color,hours}){
-  return (
-    <div style={{background:C.card,borderRadius:10,padding:'16px 18px',border:`1px solid ${C.border}`,borderLeft:`4px solid ${color}`}}>
-      <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:'.08em',fontWeight:700,marginBottom:5}}>{label}</div>
-      <div style={{fontSize:26,fontWeight:800,color,fontFamily:'Georgia,serif',lineHeight:1}}>{value}</div>
-      {hours!==undefined&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>⏱ {hours}h</div>}
-      {sub&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>{sub}</div>}
-    </div>
-  )
-}
-function SecHdr({children,color}){
-  return (
-    <div style={{display:'flex',alignItems:'center',gap:10,margin:'20px 0 10px'}}>
-      <div style={{width:4,height:18,background:color,borderRadius:2}}/>
-      <span style={{fontSize:12,fontWeight:700,color:C.navy,textTransform:'uppercase',letterSpacing:'.07em'}}>{children}</span>
-    </div>
-  )
-}
+import { API_BASE, C, CONTENT_TYPES, round, normalizeRow, parseLocally } from "./reportUtils.js"
+import UploadScreen from "./UploadScreen.jsx"
+import SummaryTab from "./SummaryTab.jsx"
+import DateWiseTab from "./DateWiseTab.jsx"
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function ContentReportDashboard(){
@@ -249,7 +23,6 @@ export default function ContentReportDashboard(){
   const [inputMode, setInputMode] = useState('upload')   // 'upload' | 'months'
   const [selectedMonths, setSelectedMonths] = useState([new Date().getMonth() + 1])
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
-  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
   const toggleMonth = (m) => setSelectedMonths(prev =>
     prev.includes(m) ? prev.filter(x=>x!==m) : [...prev, m].sort((a,b)=>a-b))
@@ -515,116 +288,15 @@ export default function ContentReportDashboard(){
 
   // ── Upload screen ─────────────────────────────────────────────────────────
   if(!data&&!loading) return (
-    <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'system-ui,sans-serif'}}>
-      <div style={{textAlign:'center',maxWidth:520,width:'100%',padding:'0 20px'}}>
-        <div style={{fontSize:52,marginBottom:12}}>📡</div>
-        <h1 style={{fontSize:24,fontWeight:800,color:C.navy,marginBottom:6}}>Content Reports</h1>
-        <p style={{color:C.muted,fontSize:14,marginBottom:28}}>Upload content-report.xlsx to generate the publishing dashboard</p>
-
-        {/* Project selector — each project has its own separate DB config for duration lookups */}
-        <div style={{marginBottom:16,textAlign:'left'}}>
-          <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>Project</label>
-          <select
-            value={projectId}
-            onChange={e=>setProjectId(e.target.value)}
-            style={{width:'100%',padding:'10px 12px',borderRadius:10,border:`1.5px solid ${C.border}`,
-              background:C.card,color:C.navy,fontSize:14,fontWeight:600,outline:'none',boxSizing:'border-box'}}
-          >
-            {projects.length === 0 && <option value="default">default</option>}
-            {projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          {projectsError && (
-            <p style={{fontSize:11,color:C.red||'#c0392b',marginTop:4}}>⚠️ {projectsError} — using "default"</p>
-          )}
-        </div>
-
-        {/* Input mode toggle: upload a file, or query the DB directly for selected months */}
-        <div style={{display:'flex',gap:8,marginBottom:16}}>
-          <button onClick={()=>setInputMode('upload')} style={{flex:1,padding:'9px 12px',borderRadius:10,
-            border:`1.5px solid ${inputMode==='upload'?C.blue:C.border}`,
-            background:inputMode==='upload'?'#EAF1FB':C.card,color:inputMode==='upload'?C.blue:C.muted,
-            fontWeight:700,fontSize:13,cursor:'pointer'}}>📂 Upload File</button>
-          <button onClick={()=>setInputMode('months')} style={{flex:1,padding:'9px 12px',borderRadius:10,
-            border:`1.5px solid ${inputMode==='months'?C.blue:C.border}`,
-            background:inputMode==='months'?'#EAF1FB':C.card,color:inputMode==='months'?C.blue:C.muted,
-            fontWeight:700,fontSize:13,cursor:'pointer'}}>📅 Select Months</button>
-        </div>
-
-        {inputMode === 'months' ? (
-          <div style={{textAlign:'left',marginBottom:16,background:C.card,border:`1.5px solid ${C.border}`,borderRadius:12,padding:16}}>
-            <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>Year</label>
-            <input type="number" value={selectedYear} onChange={e=>setSelectedYear(parseInt(e.target.value)||selectedYear)}
-              style={{width:'100%',padding:'9px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,
-                background:C.bg,color:C.navy,fontSize:14,fontWeight:600,outline:'none',boxSizing:'border-box',marginBottom:14}} />
-
-            <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>Months</label>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,marginBottom:14}}>
-              {MONTH_NAMES.map((name,i)=>{
-                const m = i+1, active = selectedMonths.includes(m)
-                return (
-                  <button key={m} onClick={()=>toggleMonth(m)} style={{padding:'8px 4px',borderRadius:8,
-                    border:`1.5px solid ${active?C.blue:C.border}`,background:active?C.blue:C.bg,
-                    color:active?'#fff':C.muted,fontWeight:700,fontSize:12,cursor:'pointer'}}>{name}</button>
-                )
-              })}
-            </div>
-
-            <button onClick={()=>generateFromDb()} disabled={!selectedMonths.length}
-              style={{width:'100%',padding:'12px',borderRadius:10,border:'none',
-                background:selectedMonths.length?C.blue:'#ccc',color:'#fff',fontWeight:700,fontSize:14,
-                cursor:selectedMonths.length?'pointer':'not-allowed'}}>
-              ⚡ Generate Report ({selectedMonths.length} month{selectedMonths.length===1?'':'s'} selected)
-            </button>
-          </div>
-        ) : (
-        <>
-        <div
-          onDrop={onDrop}
-          onDragOver={e=>{e.preventDefault();setDrag(true)}}
-          onDragLeave={()=>setDrag(false)}
-          onClick={()=>document.getElementById('fi').click()}
-          style={{border:`2px dashed ${drag?C.blue:C.border}`,borderRadius:14,padding:'36px 24px',
-            cursor:'pointer',background:drag?'#EEF4FF':C.card,transition:'all .2s',marginBottom:16}}
-        >
-          <div style={{fontSize:36,marginBottom:10}}>📂</div>
-          <div style={{fontSize:15,fontWeight:600,color:C.navy,marginBottom:4}}>{drag?'Drop to upload':'Drop .xlsx here or click to browse'}</div>
-          <div style={{fontSize:12,color:C.muted}}>Supports content-report.xlsx with optional _duration_hrs column</div>
-        </div>
-        <input id="fi" type="file" accept=".xlsx,.xls" onChange={e=>e.target.files[0]&&processFile(e.target.files[0])} style={{display:'none'}}/>
-        </>
-        )}
-
-        {/* API Base Config */}
-        <div style={{marginBottom:12}}>
-          <button onClick={()=>setShowApi(v=>!v)} style={{fontSize:12,color:C.muted,background:'none',border:'none',cursor:'pointer',textDecoration:'underline'}}>
-            ⚙ Backend URL: {apiBase}
-          </button>
-          {showApi&&(
-            <div style={{display:'flex',gap:8,marginTop:8}}>
-              <input value={apiBase} onChange={e=>setApiBase(e.target.value)}
-                style={{flex:1,padding:'7px 10px',borderRadius:7,border:`1px solid ${C.border}`,fontSize:13,fontFamily:'monospace'}}/>
-              <button onClick={()=>{localStorage.setItem('report_api_base',apiBase);setShowApi(false)}}
-                style={{padding:'7px 14px',borderRadius:7,background:C.navy,color:'#fff',border:'none',cursor:'pointer',fontSize:13}}>Save</button>
-            </div>
-          )}
-        </div>
-
-        {error&&<div style={{color:'#C0392B',fontSize:13,background:'#FFF0EE',padding:'10px 14px',borderRadius:8,marginBottom:12}}>⚠ {error}</div>}
-
-        <div style={{padding:'14px 16px',background:'#FFFBEC',border:'1px solid #F0D060',borderRadius:10,fontSize:12,color:'#7B5700',textAlign:'left'}}>
-          <strong>📋 Business Rules:</strong>
-          <ul style={{margin:'6px 0 0',paddingLeft:18,lineHeight:1.9}}>
-            <li>Published = vod_cms_status is <code>published</code></li>
-            <li>Archived = vod_cms_status is <code>archived</code></li>
-            <li>Purged = vod_cms_status is <code>purged</code></li>
-            <li>Manual = non-airing External ID + published</li>
-            <li>L2V = External ID starts with <code>airing-</code> (any status: published/archived/purged)</li>
-            <li>If file has <code>_duration_hrs</code> → uses it, skips MySQL</li>
-            <li>Series/Season duration always = 0</li>
-          </ul>
-        </div>
-      </div>
-    </div>
+    <UploadScreen
+      projectId={projectId} setProjectId={setProjectId} projects={projects} projectsError={projectsError}
+      inputMode={inputMode} setInputMode={setInputMode}
+      selectedYear={selectedYear} setSelectedYear={setSelectedYear} selectedMonths={selectedMonths} toggleMonth={toggleMonth}
+      generateFromDb={generateFromDb}
+      drag={drag} setDrag={setDrag} onDrop={onDrop} processFile={processFile}
+      apiBase={apiBase} setApiBase={setApiBase} showApi={showApi} setShowApi={setShowApi}
+      error={error}
+    />
   )
 
   // Show loading spinner overlay on top of data when fetching MySQL
@@ -639,11 +311,11 @@ export default function ContentReportDashboard(){
         <div style={{width:200,height:4,background:'#E0E7FF',borderRadius:4,margin:'16px auto',overflow:'hidden'}}>
           <div style={{height:'100%',background:C.blue,borderRadius:4,animation:'progress 2s ease-in-out infinite'}}/>
         </div>
-        <div style={{fontSize:12,color:C.muted}}>Please wait — processing your file</div>
       </div>
       <style>{`
-        @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
-        @keyframes progress { 0%{width:0%;margin-left:0} 50%{width:60%;margin-left:20%} 100%{width:0%;margin-left:100%} }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        @keyframes progress { 0%{transform:translateX(-100%)} 100%{transform:translateX(400%)} }
+        @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       `}</style>
     </div>
   )
@@ -703,7 +375,7 @@ export default function ContentReportDashboard(){
               onChange={e=>setIncludeArchivedPurged(e.target.checked)}
               style={{width:14,height:14,cursor:'pointer'}}
             />
-            Include Archived &amp; Purged
+            Include Archived, Purged &amp; Draft
           </label>
           <button onClick={handleDownload} disabled={dlLoading}
             style={{padding:'8px 18px',borderRadius:8,border:'none',background:'#2E75B6',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',opacity:dlLoading?0.7:1}}>
@@ -745,199 +417,16 @@ export default function ContentReportDashboard(){
       )}
 
       <div style={{padding:'20px 24px',maxWidth:1400,margin:'0 auto'}}>
-        {tab==='summary'&&(
-          <>
-            <SecHdr color={C.blue}>Overall Published</SecHdr>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-              <KpiCard label="Total Published Content" value={summary.total_content} color={C.blue}/>
-              <KpiCard label="Total Published Hours"   value={`${summary.total_hours}h`} color={C.blue} sub="from MySQL duration query"/>
-            </div>
-
-            {includeArchivedPurged && (
-              <>
-                <SecHdr color={C.archived}>Total Archived</SecHdr>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-                  <KpiCard label="Total Archived Content" value={summary.archived_content||0} color={C.archived}/>
-                  <KpiCard label="Total Archived Hours"   value={`${summary.archived_hours||0}h`} color={C.archived}/>
-                </div>
-
-                <SecHdr color={C.purged}>Total Purged</SecHdr>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-                  <KpiCard label="Total Purged Content" value={summary.purged_content||0} color={C.purged}/>
-                  <KpiCard label="Total Purged Hours"   value={`${summary.purged_hours||0}h`} color={C.purged}/>
-                </div>
-
-                <SecHdr color={C.draft}>Total Draft</SecHdr>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-                  <KpiCard label="Total Draft Content" value={summary.draft_content||0} color={C.draft}/>
-                  <KpiCard label="Total Draft Hours"   value={`${summary.draft_hours||0}h`} color={C.draft}/>
-                </div>
-              </>
-            )}
-
-            <SecHdr color={C.teal}>By Content Type</SecHdr>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:12}}>
-              {reportTypes.map((ct,i)=>{
-                const colors=[C.teal,C.blue,C.purple,C.amber,'#2980B9',C.green]
-                return <KpiCard key={ct} label={ct} value={summary.by_type[ct]||0}
-                  hours={summary.by_type_hours?.[ct]||0} color={colors[i % colors.length]}/>
-              })}
-            </div>
-
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,marginTop:4}}>
-              <div>
-                <SecHdr color={C.amber}>Manual Insertion</SecHdr>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                  <KpiCard label="Total Content" value={summary.manual_content} color={C.amber}/>
-                  <KpiCard label="Total Hours" value={`${summary.manual_hours}h`} color={C.amber}/>
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                  <KpiCard label="Published — Content" value={summary.manual_published_content||0} color={C.amber}/>
-                  <KpiCard label="Published — Hours" value={`${summary.manual_published_hours||0}h`} color={C.amber}/>
-                </div>
-                {includeArchivedPurged && (
-                  <>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                      <KpiCard label="Archived — Content" value={summary.manual_archived_content||0} color={C.amber}/>
-                      <KpiCard label="Archived — Hours" value={`${summary.manual_archived_hours||0}h`} color={C.amber}/>
-                    </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                      <KpiCard label="Purged — Content" value={summary.manual_purged_content||0} color={C.amber}/>
-                      <KpiCard label="Purged — Hours" value={`${summary.manual_purged_hours||0}h`} color={C.amber}/>
-                    </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                      <KpiCard label="Draft — Content" value={summary.manual_draft_content||0} color={C.amber}/>
-                      <KpiCard label="Draft — Hours" value={`${summary.manual_draft_hours||0}h`} color={C.amber}/>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div>
-                <SecHdr color={C.purple}>L2V (Live-to-VOD)</SecHdr>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                  <KpiCard label="Total Content" value={summary.l2v_content} color={C.purple}/>
-                  <KpiCard label="Total Hours" value={`${summary.l2v_hours}h`} color={C.purple}/>
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                  <KpiCard label="Published — Content" value={summary.l2v_published_content||0} color={C.purple}/>
-                  <KpiCard label="Published — Hours" value={`${summary.l2v_published_hours||0}h`} color={C.purple}/>
-                </div>
-                {includeArchivedPurged && (
-                  <>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                      <KpiCard label="Archived — Content" value={summary.l2v_archived_content||0} color={C.purple}/>
-                      <KpiCard label="Archived — Hours" value={`${summary.l2v_archived_hours||0}h`} color={C.purple}/>
-                    </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                      <KpiCard label="Purged — Content" value={summary.l2v_purged_content||0} color={C.purple}/>
-                      <KpiCard label="Purged — Hours" value={`${summary.l2v_purged_hours||0}h`} color={C.purple}/>
-                    </div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
-                      <KpiCard label="Draft — Content" value={summary.l2v_draft_content||0} color={C.purple}/>
-                      <KpiCard label="Draft — Hours" value={`${summary.l2v_draft_hours||0}h`} color={C.purple}/>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Full table */}
-            <SecHdr color={'#0E6655'}>DVB Processed</SecHdr>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-              <KpiCard label="DVB Processed Content" value={summary.dvb_content||0} color={'#0E6655'}/>
-              <KpiCard label="DVB Processed Hours"   value={`${summary.dvb_hours||0}h`} color={'#0E6655'}/>
-            </div>
-
-            <SecHdr color={C.navy}>Full Breakdown</SecHdr>
-            <div style={{background:C.card,borderRadius:10,border:`1px solid ${C.border}`,overflow:'hidden'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
-                <thead>
-                  <tr style={{background:C.navy,color:'#fff'}}>
-                    {['Metric','Content','Hours','Manual Content','Manual Hours','L2V Content','L2V Hours'].map(h=>(
-                      <th key={h} style={{padding:'10px 14px',textAlign:h==='Metric'?'left':'center',fontWeight:700,fontSize:11}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    {label:'Total Published',ct:null,group:'overall'},
-                    ...reportTypes.map(ct=>({label:`  ${ct}`,ct,group:'type'})),
-                  ].map((row,i)=>{
-                    const pub_ct = row.ct ? summary.by_type[row.ct]||0 : summary.total_content
-                    const hrs_ct = row.ct ? summary.by_type_hours?.[row.ct]||0 : summary.total_hours
-                    return (
-                      <tr key={i} style={{background:i%2===0?'#F8FAFF':'#fff',borderBottom:`1px solid ${C.border}`}}>
-                        <td style={{padding:'9px 14px',fontWeight:row.ct?400:700,color:C.text,paddingLeft:row.ct?28:14}}>{row.label.trim()}</td>
-                        <td style={{padding:'9px 14px',textAlign:'center',fontWeight:700,color:C.navy}}>{pub_ct}</td>
-                        <td style={{padding:'9px 14px',textAlign:'center',color:C.teal,fontWeight:600}}>{hrs_ct}h</td>
-                        <td style={{padding:'9px 14px',textAlign:'center',color:C.amber,fontWeight:600}}>{row.ct?'—':summary.manual_content}</td>
-                        <td style={{padding:'9px 14px',textAlign:'center',color:C.amber,fontWeight:600}}>{row.ct?'—':`${summary.manual_hours}h`}</td>
-                        <td style={{padding:'9px 14px',textAlign:'center',color:C.purple,fontWeight:600}}>{row.ct?'—':summary.l2v_content}</td>
-                        <td style={{padding:'9px 14px',textAlign:'center',color:C.purple,fontWeight:600}}>{row.ct?'—':`${summary.l2v_hours}h`}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
+        {tab==='summary' && (
+          <SummaryTab summary={summary} includeArchivedPurged={includeArchivedPurged} reportTypes={reportTypes} />
         )}
 
-        {tab==='datewise'&&(
-          <>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-              <div style={{fontSize:13,color:C.muted}}>{date_cols.length} days · {date_cols[0]} to {date_cols[date_cols.length-1]}</div>
-              <div style={{display:'flex',gap:12,alignItems:'center'}}>
-                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.navy,cursor:'pointer',whiteSpace:'nowrap'}}>
-                  <input
-                    type="checkbox"
-                    checked={includeArchivedPurged}
-                    onChange={e=>setIncludeArchivedPurged(e.target.checked)}
-                    style={{width:14,height:14,cursor:'pointer'}}
-                  />
-                  Include Archived &amp; Purged
-                </label>
-                <button onClick={handleDownload} disabled={dlLoading}
-                  style={{padding:'7px 16px',borderRadius:7,border:`1px solid ${C.blue}`,background:'#EEF4FF',color:C.blue,fontSize:12,fontWeight:700,cursor:'pointer'}}>
-                  {dlLoading?'⏳':'⬇'} Download Excel
-                </button>
-              </div>
-            </div>
-            <div style={{overflowX:'auto',borderRadius:10,border:`1px solid ${C.border}`,background:C.card}}>
-              <table style={{borderCollapse:'collapse',fontSize:12,minWidth:'max-content',width:'100%'}}>
-                <thead>
-                  <tr style={{background:C.navy}}>
-                    <th style={{padding:'10px 14px',textAlign:'left',color:'#fff',fontWeight:700,fontSize:12,
-                      position:'sticky',left:0,background:C.navy,minWidth:220,borderRight:'1px solid rgba(255,255,255,0.1)'}}>Metric</th>
-                    {date_cols.map(dc=>(
-                      <th key={dc} style={{padding:'10px 8px',color:'#fff',fontWeight:700,textAlign:'center',minWidth:68}}>{dc}</th>
-                    ))}
-                    <th style={{padding:'10px 12px',color:'#FFD700',fontWeight:800,textAlign:'center',minWidth:80,background:'#162B50'}}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {METRICS.map(({metric,label,group},ri)=>{
-                    const row  = datewise.find(r=>r.Metric===metric)||{}
-                    const vals = date_cols.map(dc=>row[dc]||0)
-                    const total= round(vals.reduce((a,b)=>a+b,0))
-                    const gc   = GRP_COLOR[group]
-                    const bg   = ri%2===0?GRP_BG[group]:'#fff'
-                    return (
-                      <tr key={metric} style={{background:bg,borderBottom:`1px solid ${C.border}`}}>
-                        <td style={{padding:'9px 14px',fontWeight:700,color:gc,position:'sticky',left:0,background:bg,borderRight:`2px solid ${C.border}`}}>{label||metric}</td>
-                        {vals.map((v,ci)=>(
-                          <td key={ci} style={{padding:'9px 8px',textAlign:'center',fontWeight:v>0?700:400,color:v>0?gc:'#ccc'}}>{v>0?v:'—'}</td>
-                        ))}
-                        <td style={{padding:'9px 12px',textAlign:'center',fontWeight:800,color:'#7B3F00',background:'#FFF2CC',borderLeft:`2px solid ${C.border}`}}>
-                          {total||'—'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
+        {tab==='datewise' && (
+          <DateWiseTab
+            date_cols={date_cols} datewise={datewise} METRICS={METRICS} GRP_COLOR={GRP_COLOR} GRP_BG={GRP_BG}
+            includeArchivedPurged={includeArchivedPurged} setIncludeArchivedPurged={setIncludeArchivedPurged}
+            handleDownload={handleDownload} dlLoading={dlLoading}
+          />
         )}
       </div>
     </div>
