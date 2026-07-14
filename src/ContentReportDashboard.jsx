@@ -261,7 +261,7 @@ export default function ContentReportDashboard(){
         // Backend not available — generate Excel locally from parsed data
         const { summary, datewise, date_cols } = data
         const wb = XLSX.utils.book_new()
-        const reportTypes = Object.keys(summary.by_type || {}).length ? Object.keys(summary.by_type) : CONTENT_TYPES
+        const reportTypes = Object.keys(summary?.by_type || {}).length ? Object.keys(summary.by_type) : CONTENT_TYPES
         const metrics = ['Total Published Content','Total Published Hours',
           ...reportTypes,'Manual Content','Manual Hours','Manual Published Content','Manual Published Hours',
           ...(includeArchivedPurged ? ['Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours','Manual Draft Content','Manual Draft Hours'] : []),
@@ -288,7 +288,7 @@ export default function ContentReportDashboard(){
           ] : []),
           ['BY CONTENT TYPE',''],
           ...reportTypes.flatMap(ct=>[
-            [`  ${ct} — Content`, summary.by_type[ct]||0],
+            [`  ${ct} — Content`, summary?.by_type?.[ct]||0],
             [`  ${ct} — Hours`,   summary.by_type_hours?.[ct]||0],
           ]),['',''],
           ['MANUAL INSERTION',''],
@@ -359,10 +359,16 @@ export default function ContentReportDashboard(){
   )
 
   // Show loading spinner overlay on top of data when fetching MySQL
-  const fetchingDuration = loading && data !== null
+  const fetchingDuration = loading && data !== null && !!data?.summary
 
-  // Full screen loading when no data yet
-  if (loading && !data) return (
+  // Full screen loading when no data yet — covers BOTH the original case
+  // (data is still null) AND the DB-direct flow's in-between state, where
+  // data is already set to a lightweight {job_id, status:'fetching'}
+  // placeholder before the background MySQL/Couchbase fetch has populated
+  // summary/datewise. Without the `!data?.summary` check here, this guard
+  // never fires for that in-between state and falls through to the
+  // dashboard render below, which then crashes trying to read summary.by_type.
+  if (loading && !data?.summary) return (
     <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'system-ui,sans-serif'}}>
       <div style={{textAlign:'center',maxWidth:400}}>
         <div style={{fontSize:44,marginBottom:16,animation:'pulse 1.5s ease-in-out infinite'}}>📊</div>
@@ -381,12 +387,19 @@ export default function ContentReportDashboard(){
 
   if (!data) return null
   const {summary,datewise,date_cols,duration_source,has_local_duration} = data
+  // The DB-direct flow now returns an immediate lightweight response
+  // ({job_id, status:'fetching'}) before the background MySQL/Couchbase
+  // fetch completes — summary/datewise/date_cols don't exist yet at that
+  // point, even though `data` itself is already set. Show nothing (the
+  // loading UI elsewhere already covers this) rather than crash trying to
+  // render a dashboard for data that hasn't arrived.
+  if (!summary || !datewise) return null
   const allReportTypes = Object.keys(summary?.by_type || {}).length ? Object.keys(summary.by_type) : CONTENT_TYPES
   // Hide a content type entirely (in both Summary and Date-wise) if it has
   // zero content AND zero hours for the whole report period — a type that
   // never appears shouldn't clutter the view with an all-dash row/card.
   const reportTypes = allReportTypes.filter(ct =>
-    (summary.by_type?.[ct] || 0) > 0 || (summary.by_type_hours?.[ct] || 0) > 0)
+    (summary?.by_type?.[ct] || 0) > 0 || (summary?.by_type_hours?.[ct] || 0) > 0)
   const METRICS_RAW = [
     {metric:'Total Published Content',group:'overall'},
     {metric:'Total Published Hours',  group:'overall'},
