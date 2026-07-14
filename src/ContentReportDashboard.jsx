@@ -52,38 +52,6 @@ export default function ContentReportDashboard(){
     return res.json()
   }
 
-  const pollJobStatus = useCallback(async (job_id, intervalRef) => {
-    try {
-      const res = await fetch(`${apiBase}/status/${job_id}`, {headers:{'ngrok-skip-browser-warning':'1'}})
-      if (!res.ok) return
-      const job = await res.json()
-      console.log(`[Report] poll job=${job_id} status=${job.status} duration_source=${job.duration_source}`)
-
-      // Update data with latest summary (includes hours once MySQL done)
-      setData(prev => prev ? {
-        ...prev,
-        summary:         job.summary,
-        datewise:        job.datewise,
-        date_cols:       job.date_cols,
-        duration_source: job.duration_source,
-        download_ready:  job.download_ready,
-        status:          job.status,
-      } : prev)
-
-      // Stop polling when done or error
-      if (job.status === 'done' || job.status === 'error') {
-        clearInterval(intervalRef.current)
-        setLoading(false)
-        if (job.status === 'done') {
-          console.log(`[Report] job=${job_id} complete — hours updated`)
-        }
-      }
-    } catch(e) {
-      clearInterval(intervalRef.current)
-      setLoading(false)
-    }
-  }, [apiBase])
-
   // DB-direct jobs report status='done' immediately (the numbers are ready
   // synchronously), but the styled Excel file is still built in the
   // background — download_ready flips to true separately, later. Without
@@ -111,10 +79,48 @@ export default function ContentReportDashboard(){
     check()
   }, [apiBase])
 
+  const pollJobStatus = useCallback(async (job_id, intervalRef) => {
+    try {
+      const res = await fetch(`${apiBase}/status/${job_id}`, {headers:{'ngrok-skip-browser-warning':'1'}})
+      if (!res.ok) return
+      const job = await res.json()
+      console.log(`[Report] poll job=${job_id} status=${job.status} duration_source=${job.duration_source}`)
+
+      // Update data with latest summary (includes hours once MySQL done)
+      setData(prev => prev ? {
+        ...prev,
+        summary:         job.summary,
+        datewise:        job.datewise,
+        date_cols:       job.date_cols,
+        duration_source: job.duration_source,
+        download_ready:  job.download_ready,
+        status:          job.status,
+      } : prev)
+
+      // Stop polling when done or error
+      if (job.status === 'done' || job.status === 'error') {
+        clearInterval(intervalRef.current)
+        setLoading(false)
+        if (job.status === 'done') {
+          console.log(`[Report] job=${job_id} complete — hours updated`)
+          // The numbers are ready, but the styled Excel file is built
+          // separately in the background (see _build_excel_async on the
+          // backend) — poll until it's actually ready to download, rather
+          // than assuming it already is.
+          pollUntilDownloadReady(job_id)
+        }
+      }
+    } catch(e) {
+      clearInterval(intervalRef.current)
+      setLoading(false)
+    }
+  }, [apiBase, pollUntilDownloadReady])
+
   const generateFromDb = useCallback(async () => {
     setError(null); setLoading(true); setData(null)
     setLoadingMsg('Querying database...')
     await new Promise(resolve => setTimeout(resolve, 50))
+    const pollRef = { current: null }
 
     try {
       const res = await fetch(`${apiBase}/generate-from-db`, {
@@ -132,17 +138,34 @@ export default function ContentReportDashboard(){
         throw new Error(errBody.detail || `Backend error: ${res.status}`)
       }
       const result = await res.json()
-      console.log(`[Report] DB-generated — job=${result.job_id} status=${result.status}`)
+      console.log(`[Report] DB fetch started — job=${result.job_id} status=${result.status}`)
       setData({...result, status: result.status})
-      setLoading(false)
-      // status is already 'done' here, but the styled Excel is still building
-      // in the background — poll separately until download_ready flips true
-      if (result.job_id) pollUntilDownloadReady(result.job_id)
+
+      // The initial POST now returns almost instantly (status='fetching') —
+      // the actual MySQL + Couchbase work happens in the background and can
+      // take a while for several months' worth of content. Poll the same
+      // way the file-upload path already does, instead of assuming the
+      // numbers are ready right away. This is what actually fixes the
+      // multi-month timeout — the browser was previously waiting on one
+      // single very long request instead of getting an immediate response
+      // and polling for progress.
+      setLoadingMsg('Querying MySQL and Couchbase for selected months...')
+      pollRef.current = setInterval(
+        () => pollJobStatus(result.job_id, pollRef),
+        2000
+      )
+      // Safety timeout — several months across multiple projects can
+      // genuinely take a while; stop polling after 5 minutes rather than
+      // forever, but don't cut it off at just 60s like the file-upload path.
+      setTimeout(() => {
+        clearInterval(pollRef.current)
+        setLoading(false)
+      }, 300000)
     } catch(err) {
       setError(err.message)
       setLoading(false)
     }
-  }, [apiBase, projectId, selectedMonths, selectedYear, includeArchivedPurged, pollUntilDownloadReady])
+  }, [apiBase, projectId, selectedMonths, selectedYear, includeArchivedPurged, pollJobStatus])
 
   const processFile = useCallback(async(file) => {
     setError(null); setLoading(true); setData(null)
@@ -358,8 +381,13 @@ export default function ContentReportDashboard(){
 
   if (!data) return null
   const {summary,datewise,date_cols,duration_source,has_local_duration} = data
-  const reportTypes = Object.keys(summary?.by_type || {}).length ? Object.keys(summary.by_type) : CONTENT_TYPES
-  const METRICS = [
+  const allReportTypes = Object.keys(summary?.by_type || {}).length ? Object.keys(summary.by_type) : CONTENT_TYPES
+  // Hide a content type entirely (in both Summary and Date-wise) if it has
+  // zero content AND zero hours for the whole report period — a type that
+  // never appears shouldn't clutter the view with an all-dash row/card.
+  const reportTypes = allReportTypes.filter(ct =>
+    (summary.by_type?.[ct] || 0) > 0 || (summary.by_type_hours?.[ct] || 0) > 0)
+  const METRICS_RAW = [
     {metric:'Total Published Content',group:'overall'},
     {metric:'Total Published Hours',  group:'overall'},
     {metric:'Archived Content',group:'archived'},{metric:'Archived Hours',group:'archived'},
@@ -378,6 +406,17 @@ export default function ContentReportDashboard(){
     {metric:'L2V Draft Content',group:'l2v'},{metric:'L2V Draft Hours',group:'l2v'},
     {metric:'DVB Content',group:'dvb'},{metric:'DVB Hours',group:'dvb'},
   ]
+  // Hide any Date-wise row entirely empty across the whole period (all dashes) —
+  // except the headline Total Published rows, which stay visible even at 0
+  // so the report clearly communicates "nothing published" rather than the
+  // whole overall section silently vanishing.
+  const ALWAYS_SHOW = new Set(['Total Published Content', 'Total Published Hours'])
+  const METRICS = METRICS_RAW.filter(({metric}) => {
+    if (ALWAYS_SHOW.has(metric)) return true
+    const row = datewise.find(r=>r.Metric===metric) || {}
+    const total = date_cols.reduce((s,dc)=>s+(row[dc]||0), 0)
+    return total > 0
+  })
   const GRP_COLOR={overall:C.blue,type:C.teal,manual:C.amber,l2v:C.purple,dvb:'#0E6655',archived:C.archived,purged:C.purged,draft:C.draft}
   const GRP_BG   ={overall:'#EAF1FB',type:'#EEF8EE',manual:'#FFF9EC',l2v:'#F5F0FF',dvb:'#E8F8F5',archived:'#FDEDEC',purged:'#ECECEC',draft:'#FCF3CF'}
   const currentProjectLabel = projects.find(p => p.id === (data.project_id || projectId))?.label || projectId
