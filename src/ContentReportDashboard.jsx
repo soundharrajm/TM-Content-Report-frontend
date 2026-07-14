@@ -24,6 +24,20 @@ export default function ContentReportDashboard(){
   const [selectedMonths, setSelectedMonths] = useState([new Date().getMonth() + 1])
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
 
+  // Tracks whichever polling interval is currently active, persisted across
+  // renders and re-invocations — without this, clicking "Generate Report"
+  // a second time while a previous job is still being polled would start a
+  // SECOND overlapping interval, with both racing to update the same
+  // `data` state with results from two different job_ids.
+  const activePollRef = useRef(null)
+  const activeDownloadPollRef = useRef(null)
+  const clearActivePoll = () => {
+    if (activePollRef.current) clearInterval(activePollRef.current)
+    if (activeDownloadPollRef.current) clearInterval(activeDownloadPollRef.current)
+    activePollRef.current = null
+    activeDownloadPollRef.current = null
+  }
+
   const toggleMonth = (m) => setSelectedMonths(prev =>
     prev.includes(m) ? prev.filter(x=>x!==m) : [...prev, m].sort((a,b)=>a-b))
 
@@ -61,6 +75,14 @@ export default function ContentReportDashboard(){
     let attempts = 0
     const intervalRef = { current: null }
     const check = async () => {
+      // If a newer poll (new report, or "Try Again"/"New File") has since
+      // taken over activeDownloadPollRef, this one is stale — stop touching
+      // shared state instead of racing a currently-active job's data with
+      // a leftover Excel-ready check from a previous one.
+      if (activeDownloadPollRef.current !== intervalRef.current) {
+        clearInterval(intervalRef.current)
+        return
+      }
       attempts++
       try {
         const res = await fetch(`${apiBase}/status/${job_id}`, {headers:{'ngrok-skip-browser-warning':'1'}})
@@ -70,19 +92,40 @@ export default function ContentReportDashboard(){
           if (job.download_ready) {
             console.log(`[Report] job=${job_id} Excel ready on backend`)
             clearInterval(intervalRef.current)
+            if (activeDownloadPollRef.current === intervalRef.current) activeDownloadPollRef.current = null
           }
         }
       } catch (e) { /* keep trying until maxAttempts */ }
-      if (attempts >= maxAttempts) clearInterval(intervalRef.current)
+      if (attempts >= maxAttempts) {
+        clearInterval(intervalRef.current)
+        if (activeDownloadPollRef.current === intervalRef.current) activeDownloadPollRef.current = null
+      }
     }
     intervalRef.current = setInterval(check, 1000)
+    activeDownloadPollRef.current = intervalRef.current
     check()
   }, [apiBase])
 
   const pollJobStatus = useCallback(async (job_id, intervalRef) => {
     try {
       const res = await fetch(`${apiBase}/status/${job_id}`, {headers:{'ngrok-skip-browser-warning':'1'}})
-      if (!res.ok) return
+      if (!res.ok) {
+        // A single failed poll could just be a transient network blip —
+        // but if the job (or the whole backend) is genuinely gone, retrying
+        // forever every 2s for up to 5 minutes just leaves the user staring
+        // at a stuck "fetching" state with no explanation. Give it a few
+        // tries, then treat it as terminal.
+        intervalRef.failures = (intervalRef.failures || 0) + 1
+        if (intervalRef.failures >= 3) {
+          clearInterval(intervalRef.current)
+          setLoading(false)
+          setError(res.status === 404
+            ? 'Report job not found on the backend — it may have been lost on a server restart. Please try again.'
+            : `Lost connection to backend while checking report status (HTTP ${res.status}).`)
+        }
+        return
+      }
+      intervalRef.failures = 0  // reset on any successful response
       const job = await res.json()
       console.log(`[Report] poll job=${job_id} status=${job.status} duration_source=${job.duration_source}`)
 
@@ -109,11 +152,25 @@ export default function ContentReportDashboard(){
           // backend) — poll until it's actually ready to download, rather
           // than assuming it already is.
           pollUntilDownloadReady(job_id)
+        } else {
+          // The backend fetch genuinely failed (e.g. no content found for
+          // the selected months, or a Couchbase/MySQL connection error).
+          // Without this, the dashboard would just sit there showing
+          // placeholder zeros forever with zero indication anything went
+          // wrong — `error` state only renders on the upload screen, which
+          // isn't shown anymore once `data` exists, so this needs its own
+          // path (see the in-dashboard error banner below).
+          console.error(`[Report] job=${job_id} failed: ${job.error}`)
+          setError(job.error || 'Report generation failed on the backend.')
         }
       }
     } catch(e) {
-      clearInterval(intervalRef.current)
-      setLoading(false)
+      intervalRef.failures = (intervalRef.failures || 0) + 1
+      if (intervalRef.failures >= 3) {
+        clearInterval(intervalRef.current)
+        setLoading(false)
+        setError(`Lost connection to backend: ${e.message}`)
+      }
     }
   }, [apiBase, pollUntilDownloadReady])
 
@@ -140,6 +197,7 @@ export default function ContentReportDashboard(){
   })
 
   const generateFromDb = useCallback(async () => {
+    clearActivePoll()  // stop any previous job's polling before starting a new one
     setError(null); setLoading(true); setData(null)
     setLoadingMsg('Querying database...')
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -189,12 +247,17 @@ export default function ContentReportDashboard(){
         () => pollJobStatus(result.job_id, pollRef),
         2000
       )
+      activePollRef.current = pollRef.current  // track so a later click can clear it
       // Safety timeout — several months across multiple projects can
       // genuinely take a while; stop polling after 5 minutes rather than
       // forever, but don't cut it off at just 60s like the file-upload path.
       setTimeout(() => {
-        clearInterval(pollRef.current)
-        setLoading(false)
+        if (activePollRef.current === pollRef.current) {
+          clearInterval(pollRef.current)
+          activePollRef.current = null
+          setLoading(false)
+          setError(prevErr => prevErr || 'Report generation is taking longer than 5 minutes — the backend may be stuck. Please try again or check server logs.')
+        }
       }, 300000)
     } catch(err) {
       setError(err.message)
@@ -203,6 +266,7 @@ export default function ContentReportDashboard(){
   }, [apiBase, projectId, selectedMonths, selectedYear, includeArchivedPurged, pollJobStatus])
 
   const processFile = useCallback(async(file) => {
+    clearActivePoll()  // stop any previous job's polling before starting a new one
     setError(null); setLoading(true); setData(null)
     const pollRef = { current: null }
 
@@ -231,10 +295,14 @@ export default function ContentReportDashboard(){
             () => pollJobStatus(result.job_id, pollRef),
             2000
           )
+          activePollRef.current = pollRef.current
           // Safety timeout after 60s
           setTimeout(() => {
-            clearInterval(pollRef.current)
-            setLoading(false)
+            if (activePollRef.current === pollRef.current) {
+              clearInterval(pollRef.current)
+              activePollRef.current = null
+              setLoading(false)
+            }
           }, 60000)
         }
         return
@@ -529,6 +597,21 @@ export default function ContentReportDashboard(){
           </button>
         </div>
       </div>
+
+      {/* Report generation error — visible even once the dashboard has
+          rendered, unlike the top-level `error` state which only showed on
+          the upload screen before. Covers both an explicit fetch failure
+          (setError from polling/timeouts) and the backend reporting the
+          job itself as failed (data.status==='error'). */}
+      {(error || data.status === 'error') && (
+        <div style={{background:'#FDECEA',borderBottom:'1px solid #F5B7B1',padding:'10px 24px',fontSize:13,color:'#922B21',display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
+          <span>⚠ <strong>Report generation failed:</strong> {error || data.error || 'Unknown error on the backend.'}</span>
+          <button onClick={()=>{clearActivePoll();setData(null);setError(null)}}
+            style={{padding:'4px 12px',borderRadius:6,border:'1px solid #922B21',background:'transparent',color:'#922B21',fontSize:12,cursor:'pointer',whiteSpace:'nowrap'}}>
+            Try Again
+          </button>
+        </div>
+      )}
 
       {/* Duration source banner */}
       {!has_local_duration && duration_source==='none' && (
