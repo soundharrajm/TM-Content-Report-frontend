@@ -95,6 +95,7 @@ export default function ContentReportDashboard(){
         duration_source: job.duration_source,
         download_ready:  job.download_ready,
         status:          job.status,
+        progress:        job.progress,
       } : prev)
 
       // Stop polling when done or error
@@ -115,6 +116,28 @@ export default function ContentReportDashboard(){
       setLoading(false)
     }
   }, [apiBase, pollUntilDownloadReady])
+
+  // Matches build_summary()'s exact backend shape, all zeroed — used so the
+  // dashboard can render immediately after clicking Generate Report, rather
+  // than showing a separate blank loading screen while MySQL/Couchbase run
+  // in the background. Real numbers overwrite this via polling once ready.
+  const buildPlaceholderSummary = () => ({
+    total_content: 0, total_hours: 0,
+    by_type: {}, by_type_hours: {},
+    manual_content: 0, manual_hours: 0,
+    manual_published_content: 0, manual_published_hours: 0,
+    manual_archived_content: 0, manual_archived_hours: 0,
+    manual_purged_content: 0, manual_purged_hours: 0,
+    manual_draft_content: 0, manual_draft_hours: 0,
+    l2v_content: 0, l2v_hours: 0,
+    l2v_published_content: 0, l2v_published_hours: 0,
+    l2v_archived_content: 0, l2v_archived_hours: 0,
+    l2v_purged_content: 0, l2v_purged_hours: 0,
+    l2v_draft_content: 0, l2v_draft_hours: 0,
+    archived_content: 0, archived_hours: 0,
+    purged_content: 0, purged_hours: 0,
+    draft_content: 0, draft_hours: 0,
+  })
 
   const generateFromDb = useCallback(async () => {
     setError(null); setLoading(true); setData(null)
@@ -139,7 +162,19 @@ export default function ContentReportDashboard(){
       }
       const result = await res.json()
       console.log(`[Report] DB fetch started — job=${result.job_id} status=${result.status}`)
-      setData({...result, status: result.status})
+      // Populate with placeholder zeros immediately so the dashboard shell
+      // renders right away — real numbers come in via polling below and
+      // overwrite these once MySQL/Couchbase finish.
+      setData({
+        ...result,
+        status: result.status,
+        progress: 0,
+        summary: buildPlaceholderSummary(),
+        datewise: [],
+        date_cols: [],
+        duration_source: 'mysql_direct',
+      })
+      setLoading(false)
 
       // The initial POST now returns almost instantly (status='fetching') —
       // the actual MySQL + Couchbase work happens in the background and can
@@ -436,12 +471,13 @@ export default function ContentReportDashboard(){
 
   return (
     <div style={{minHeight:'100vh',background:C.bg,fontFamily:'system-ui,sans-serif'}}>
+      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }`}</style>
       {/* Header */}
       <div style={{background:C.navy,color:'#fff',padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
         <div>
           <div style={{fontSize:17,fontWeight:800}}>📡 {currentProjectLabel} Content Publishing Report</div>
           <div style={{fontSize:12,opacity:0.7,marginTop:2}}>
-            {date_cols[0]} – {date_cols[date_cols.length-1]} &nbsp;·&nbsp;
+            {date_cols.length ? `${date_cols[0]} – ${date_cols[date_cols.length-1]}` : 'Loading dates…'} &nbsp;·&nbsp;
             {summary.total_content} published &nbsp;·&nbsp;
             {summary.total_hours}h total &nbsp;·&nbsp;
             <span style={{
@@ -454,6 +490,23 @@ export default function ContentReportDashboard(){
                duration_source==='local_file'?'📂 Duration from file':
                '⚠ Duration unavailable'}
             </span>
+            {data.status === 'fetching' && (
+              <span style={{display:'inline-flex', alignItems:'center', gap:6, marginLeft:8}}>
+                <span style={{
+                  background:'rgba(255,255,255,0.15)', borderRadius:4,
+                  padding:'1px 7px', fontSize:11,
+                  animation:'pulse 1.5s ease-in-out infinite',
+                }}>
+                  ⏳ Fetching from MySQL/Couchbase — {data.progress ?? 0}%
+                </span>
+                <span style={{width:80, height:5, background:'rgba(255,255,255,0.2)', borderRadius:4, overflow:'hidden', display:'inline-block'}}>
+                  <span style={{
+                    display:'block', height:'100%', width:`${data.progress ?? 0}%`,
+                    background:'#6ee7b7', borderRadius:4, transition:'width 0.4s ease',
+                  }}/>
+                </span>
+              </span>
+            )}
           </div>
         </div>
         <div style={{display:'flex',gap:12,alignItems:'center'}}>
