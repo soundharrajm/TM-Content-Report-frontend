@@ -31,11 +31,31 @@ export default function ContentReportDashboard(){
   // `data` state with results from two different job_ids.
   const activePollRef = useRef(null)
   const activeDownloadPollRef = useRef(null)
+  const safetyTimeoutRef = useRef(null)
   const clearActivePoll = () => {
     if (activePollRef.current) clearInterval(activePollRef.current)
     if (activeDownloadPollRef.current) clearInterval(activeDownloadPollRef.current)
+    if (safetyTimeoutRef.current) clearTimeout(safetyTimeoutRef.current)
     activePollRef.current = null
     activeDownloadPollRef.current = null
+    safetyTimeoutRef.current = null
+  }
+
+  // Schedules (or reschedules, cancelling any previous one) the overall
+  // safety timeout for a poll loop. Used first with a generous default the
+  // moment polling starts, then re-called with a size-aware value once the
+  // real batch count is known (see pollJobStatus) — a 10-batch job and a
+  // 500-batch job have no business sharing the same timeout.
+  const scheduleSafetyTimeout = (pollIntervalId, timeoutMs, message) => {
+    if (safetyTimeoutRef.current) clearTimeout(safetyTimeoutRef.current)
+    safetyTimeoutRef.current = setTimeout(() => {
+      if (activePollRef.current === pollIntervalId) {
+        clearInterval(pollIntervalId)
+        activePollRef.current = null
+        setLoading(false)
+        setError(prevErr => prevErr || message)
+      }
+    }, timeoutMs)
   }
 
   const toggleMonth = (m) => setSelectedMonths(prev =>
@@ -110,22 +130,24 @@ export default function ContentReportDashboard(){
     try {
       const res = await fetch(`${apiBase}/status/${job_id}`, {headers:{'ngrok-skip-browser-warning':'1'}})
       if (!res.ok) {
-        // A single failed poll could just be a transient network blip —
-        // but if the job (or the whole backend) is genuinely gone, retrying
-        // forever every 2s for up to 5 minutes just leaves the user staring
-        // at a stuck "fetching" state with no explanation. Give it a few
-        // tries, then treat it as terminal.
-        intervalRef.failures = (intervalRef.failures || 0) + 1
-        if (intervalRef.failures >= 3) {
+        // A 404 unambiguously means the job is gone (e.g. backend restart)
+        // — no amount of retrying fixes that, so stop immediately. Every
+        // OTHER failure (500, network blip, ngrok hiccup, etc.) must NOT
+        // give up after just a few tries: a large multi-month job can run
+        // 190+ Couchbase batches over several minutes, and a handful of
+        // transient poll failures during that time is normal, not a sign
+        // the job died. Giving up early here previously caused the UI to
+        // show a stuck progress percentage while the backend went on to
+        // finish the report successfully in the background — the user
+        // would never see the completed result. Only the 5-15 minute
+        // overall safety timeout below should ever stop this for real.
+        if (res.status === 404) {
           clearInterval(intervalRef.current)
           setLoading(false)
-          setError(res.status === 404
-            ? 'Report job not found on the backend — it may have been lost on a server restart. Please try again.'
-            : `Lost connection to backend while checking report status (HTTP ${res.status}).`)
+          setError('Report job not found on the backend — it may have been lost on a server restart. Please try again.')
         }
         return
       }
-      intervalRef.failures = 0  // reset on any successful response
       const job = await res.json()
       console.log(`[Report] poll job=${job_id} status=${job.status} duration_source=${job.duration_source}`)
 
@@ -165,12 +187,11 @@ export default function ContentReportDashboard(){
         }
       }
     } catch(e) {
-      intervalRef.failures = (intervalRef.failures || 0) + 1
-      if (intervalRef.failures >= 3) {
-        clearInterval(intervalRef.current)
-        setLoading(false)
-        setError(`Lost connection to backend: ${e.message}`)
-      }
+      // Network-level failure (fetch itself threw) — same reasoning as the
+      // non-404 case above: don't give up after a few tries, just log it
+      // and let the next tick try again. Only the overall safety timeout
+      // should end this.
+      console.warn(`[Report] poll for job=${job_id} failed (will keep retrying): ${e.message}`)
     }
   }, [apiBase, pollUntilDownloadReady])
 
@@ -249,16 +270,20 @@ export default function ContentReportDashboard(){
       )
       activePollRef.current = pollRef.current  // track so a later click can clear it
       // Safety timeout — several months across multiple projects can
-      // genuinely take a while; stop polling after 5 minutes rather than
-      // forever, but don't cut it off at just 60s like the file-upload path.
+      // A large multi-month job can mean 190+ Couchbase batches, each with
+      // up to 3 retries (2s+4s+8s backoff) if the server is momentarily
+      // slow — that adds up fast. 5 minutes was cutting it too close and
+      // was actually observed abandoning healthy, still-progressing jobs
+      // in production. 20 minutes gives real headroom while still catching
+      // a genuinely stuck backend eventually.
       setTimeout(() => {
         if (activePollRef.current === pollRef.current) {
           clearInterval(pollRef.current)
           activePollRef.current = null
           setLoading(false)
-          setError(prevErr => prevErr || 'Report generation is taking longer than 5 minutes — the backend may be stuck. Please try again or check server logs.')
+          setError(prevErr => prevErr || 'Report generation is taking longer than 20 minutes — the backend may be stuck. Please try again or check server logs.')
         }
-      }, 300000)
+      }, 1200000)
     } catch(err) {
       setError(err.message)
       setLoading(false)
