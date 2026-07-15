@@ -151,6 +151,28 @@ export default function ContentReportDashboard(){
       const job = await res.json()
       console.log(`[Report] poll job=${job_id} status=${job.status} duration_source=${job.duration_source}`)
 
+      // ── Stall detection — replaces any fixed overall timeout ────────────
+      // Instead of guessing how long the whole job "should" take (impossible:
+      // 1 month might be 40 batches, 6 months might be 300), track whether
+      // progress is MOVING. As long as batches keep completing — however many
+      // there are — polling never gives up. Only if progress stays frozen at
+      // the same value for a full 4 minutes (with retries+backoff, even a
+      // struggling batch resolves or fails well within that) do we conclude
+      // the backend is genuinely stuck. This scales automatically with any
+      // batch count, which is exactly what a fixed timeout can't do.
+      const STALL_LIMIT_MS = 4 * 60 * 1000
+      if (intervalRef.lastProgress === undefined || job.progress !== intervalRef.lastProgress) {
+        intervalRef.lastProgress = job.progress
+        intervalRef.lastProgressAt = Date.now()
+      } else if (job.status === 'fetching' && Date.now() - intervalRef.lastProgressAt > STALL_LIMIT_MS) {
+        clearInterval(intervalRef.current)
+        setLoading(false)
+        setError(`Report generation appears stuck — progress has been frozen at ${job.progress}% `
+          + (job.batches_total ? `(batch ${job.batches_done}/${job.batches_total}) ` : '')
+          + 'for over 4 minutes. The backend may have hit a problem; check server logs or try again.')
+        return
+      }
+
       // Update data with latest summary (includes hours once MySQL done)
       setData(prev => prev ? {
         ...prev,
@@ -161,6 +183,8 @@ export default function ContentReportDashboard(){
         download_ready:  job.download_ready,
         status:          job.status,
         progress:        job.progress,
+        batches_done:    job.batches_done,
+        batches_total:   job.batches_total,
       } : prev)
 
       // Stop polling when done or error
@@ -269,21 +293,14 @@ export default function ContentReportDashboard(){
         2000
       )
       activePollRef.current = pollRef.current  // track so a later click can clear it
-      // Safety timeout — several months across multiple projects can
-      // A large multi-month job can mean 190+ Couchbase batches, each with
-      // up to 3 retries (2s+4s+8s backoff) if the server is momentarily
-      // slow — that adds up fast. 5 minutes was cutting it too close and
-      // was actually observed abandoning healthy, still-progressing jobs
-      // in production. 20 minutes gives real headroom while still catching
-      // a genuinely stuck backend eventually.
-      setTimeout(() => {
-        if (activePollRef.current === pollRef.current) {
-          clearInterval(pollRef.current)
-          activePollRef.current = null
-          setLoading(false)
-          setError(prevErr => prevErr || 'Report generation is taking longer than 20 minutes — the backend may be stuck. Please try again or check server logs.')
-        }
-      }, 1200000)
+      // NOTE: no fixed overall timeout here anymore — pollJobStatus's stall
+      // detection replaces it. A fixed limit (60s, 5min, 20min...) is always
+      // wrong for someone: too short abandons healthy large jobs (observed
+      // in production at 5 min with 190 batches), too long leaves genuinely
+      // stuck small jobs spinning. Stall detection ("give up only if
+      // progress hasn't MOVED in 4 minutes") scales with any job size
+      // automatically, which is exactly what "based on the batches,
+      // increase the timeout automatically" needs.
     } catch(err) {
       setError(err.message)
       setLoading(false)
@@ -591,6 +608,7 @@ export default function ContentReportDashboard(){
                   animation:'pulse 1.5s ease-in-out infinite',
                 }}>
                   ⏳ Fetching from MySQL/Couchbase — {data.progress ?? 0}%
+                  {data.batches_total ? ` (batch ${data.batches_done}/${data.batches_total})` : ''}
                 </span>
                 <span style={{width:80, height:5, background:'rgba(255,255,255,0.2)', borderRadius:4, overflow:'hidden', display:'inline-block'}}>
                   <span style={{
