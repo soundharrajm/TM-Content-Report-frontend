@@ -46,8 +46,8 @@ export default function SummaryTab({ summary, includeArchivedPurged, reportTypes
         <div>
           <SecHdr color={C.amber}>Manual Insertion</SecHdr>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-            <KpiCard label="Total Content" value={summary.manual_content} color={C.amber}/>
-            <KpiCard label="Total Hours" value={`${summary.manual_hours}h`} color={C.amber}/>
+            <KpiCard label="Total Manual Ingest Content" value={summary.manual_content} color={C.amber}/>
+            <KpiCard label="Total Manual Ingest Hours" value={`${summary.manual_hours}h`} color={C.amber}/>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
             <KpiCard label="Published — Content" value={summary.manual_published_content||0} color={C.amber}/>
@@ -73,8 +73,8 @@ export default function SummaryTab({ summary, includeArchivedPurged, reportTypes
         <div>
           <SecHdr color={C.purple}>L2V (Live-to-VOD)</SecHdr>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-            <KpiCard label="Total Content" value={summary.l2v_content} color={C.purple}/>
-            <KpiCard label="Total Hours" value={`${summary.l2v_hours}h`} color={C.purple}/>
+            <KpiCard label="Total L2V Ingest Content" value={summary.l2v_content} color={C.purple}/>
+            <KpiCard label="Total L2V Ingest Hours" value={`${summary.l2v_hours}h`} color={C.purple}/>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
             <KpiCard label="Published — Content" value={summary.l2v_published_content||0} color={C.purple}/>
