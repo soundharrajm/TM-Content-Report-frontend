@@ -91,7 +91,18 @@ export default function ContentReportDashboard(){
   // background — download_ready flips to true separately, later. Without
   // this, handleDownload() would never see download_ready become true and
   // would always fall back to the plain, unstyled browser-side Excel export.
-  const pollUntilDownloadReady = useCallback((job_id, maxAttempts = 20) => {
+  //
+  // maxAttempts/interval sized for genuinely large reports: the backend
+  // writes full per-cell styling across up to 8 separate raw-data sheets
+  // (L2V Data, Manual Data, Manual Archived, etc.) via openpyxl, which for
+  // a report with thousands of published/archived/purged rows can easily
+  // take well past the original 20-second window this used to allow —
+  // after which download_ready would get stuck false in `data` state
+  // *permanently*, silently downgrading every subsequent download click to
+  // the plain 2-sheet client-side fallback with zero warning. 150 attempts
+  // at 2s = 5 minutes, matching the same "large reports legitimately take a
+  // while" philosophy as pollJobStatus's 4-minute stall-detection above.
+  const pollUntilDownloadReady = useCallback((job_id, maxAttempts = 150) => {
     let attempts = 0
     const intervalRef = { current: null }
     const check = async () => {
@@ -117,11 +128,13 @@ export default function ContentReportDashboard(){
         }
       } catch (e) { /* keep trying until maxAttempts */ }
       if (attempts >= maxAttempts) {
+        console.warn(`[Report] job=${job_id} styled Excel still not ready after ${maxAttempts * 2}s — `
+          + 'giving up on background polling. handleDownload() will do one more live check before falling back.')
         clearInterval(intervalRef.current)
         if (activeDownloadPollRef.current === intervalRef.current) activeDownloadPollRef.current = null
       }
     }
-    intervalRef.current = setInterval(check, 1000)
+    intervalRef.current = setInterval(check, 2000)
     activeDownloadPollRef.current = intervalRef.current
     check()
   }, [apiBase])
@@ -385,7 +398,26 @@ export default function ContentReportDashboard(){
   const handleDownload = async () => {
     setDlLoading(true)
     try {
-      if (data?.download_ready) {
+      // Background polling (pollUntilDownloadReady) may have given up before
+      // the backend actually finished, or the user may simply be clicking
+      // this well after that poll's window closed. Rather than trusting a
+      // possibly-stale `data.download_ready` flag, do one live check right
+      // now — this catches the common case where the styled Excel finished
+      // on the backend a while ago but nothing was left polling to notice.
+      let downloadReady = data?.download_ready
+      let jobIdForCheck = data?.job_id
+      if (!downloadReady && jobIdForCheck) {
+        try {
+          const res = await fetch(`${apiBase}/status/${jobIdForCheck}`, {headers:{'ngrok-skip-browser-warning':'1'}})
+          if (res.ok) {
+            const job = await res.json()
+            downloadReady = job.download_ready
+            if (downloadReady) setData(prev => prev ? { ...prev, download_ready: true } : prev)
+          }
+        } catch (e) { /* live check failed — fall through to the flag we already had */ }
+      }
+
+      if (downloadReady) {
         // Backend has the Excel ready — stream it directly (rebuilt server-side if flag changed)
         const res = await fetch(`${apiBase}/download?include_archived_purged=${includeArchivedPurged}`, {headers:{'ngrok-skip-browser-warning':'1'}})
         if (!res.ok) throw new Error('Download failed')
@@ -403,6 +435,20 @@ export default function ContentReportDashboard(){
         a.click()
         URL.revokeObjectURL(url)
       } else {
+        // Genuinely still not ready even after a live check — this is now a
+        // real, informed fallback rather than a silent quality downgrade.
+        // The plain client-side export below is missing per-cell styling
+        // and the Manual/L2V/Archived/Purged/Draft raw-data sheets the real
+        // backend report has; the user should know that's what they're
+        // getting and why, rather than discovering it after the fact.
+        console.warn('[Report] Styled backend Excel not ready — using plain client-side fallback export. '
+          + 'This file will be missing colors and the Manual/L2V/Archived/Purged/Draft detail sheets.')
+        window.alert(
+          'The full styled report is still being prepared on the server (this can take a few minutes '
+          + 'for large date ranges). Downloading a simplified version now instead — it has the same '
+          + 'numbers, but without formatting or the detailed Manual/L2V/Archived/Purged/Draft sheets. '
+          + 'Wait a bit and click Download again for the complete report.'
+        )
         // Backend not available — generate Excel locally from parsed data
         const { summary, datewise, date_cols } = data
         const wb = XLSX.utils.book_new()
