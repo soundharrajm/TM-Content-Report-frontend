@@ -4,6 +4,7 @@ import { API_BASE, C, CONTENT_TYPES, round, normalizeRow, parseLocally } from ".
 import UploadScreen from "./UploadScreen.jsx"
 import SummaryTab from "./SummaryTab.jsx"
 import DateWiseTab from "./DateWiseTab.jsx"
+import MonthWiseTab from "./MonthWiseTab.jsx"
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function ContentReportDashboard(){
@@ -209,8 +210,16 @@ export default function ContentReportDashboard(){
           // The numbers are ready, but the styled Excel file is built
           // separately in the background (see _build_excel_async on the
           // backend) — poll until it's actually ready to download, rather
-          // than assuming it already is.
-          pollUntilDownloadReady(job_id)
+          // than assuming it already is. Scale the wait window to the
+          // actual job size (batches_total) rather than a fixed cap —
+          // multi-month reports have more Couchbase batches AND now two
+          // extra MySQL lookups per pipeline run (metadata + encode-index
+          // info), so a report covering several months can genuinely take
+          // longer to build than the fixed 5-minute window this used to
+          // have, which is exactly what caused the silent unstyled
+          // client-side fallback for multi-month reports.
+          const scaledMaxAttempts = Math.max(150, Math.ceil((job.batches_total || 0) * 3))
+          pollUntilDownloadReady(job_id, scaledMaxAttempts)
         } else {
           // The backend fetch genuinely failed (e.g. no content found for
           // the selected months, or a Couchbase/MySQL connection error).
@@ -395,7 +404,7 @@ export default function ContentReportDashboard(){
     }
   },[apiBase, pollJobStatus])
 
-  const handleDownload = async () => {
+  const handleDownload = async ({ monthWise = false } = {}) => {
     setDlLoading(true)
     try {
       // Background polling (pollUntilDownloadReady) may have given up before
@@ -418,8 +427,9 @@ export default function ContentReportDashboard(){
       }
 
       if (downloadReady) {
-        // Backend has the Excel ready — stream it directly (rebuilt server-side if flag changed)
-        const res = await fetch(`${apiBase}/download?include_archived_purged=${includeArchivedPurged}`, {headers:{'ngrok-skip-browser-warning':'1'}})
+        // Backend has the Excel ready — stream it directly (rebuilt server-side
+        // if include_archived_purged or month_wise differ from the cached version)
+        const res = await fetch(`${apiBase}/download?include_archived_purged=${includeArchivedPurged}&month_wise=${monthWise}`, {headers:{'ngrok-skip-browser-warning':'1'}})
         if (!res.ok) throw new Error('Download failed')
         const blob = await res.blob()
         const url  = URL.createObjectURL(blob)
@@ -463,6 +473,17 @@ export default function ContentReportDashboard(){
 
         const s = [
           ['TM Content Publishing Summary',''],['',''],
+          ...(includeArchivedPurged ? [
+            ['TOTAL (ALL STATUSES)',''],
+            // All-status totals: Published + Archived + Purged + Draft combined.
+            // Only shown when includeArchivedPurged is on, same as the backend's
+            // build_excel() -- these values incorporate archived/purged/draft
+            // data, so showing them while hiding that breakdown would be
+            // inconsistent.
+            ['Total Contents', (summary.total_content||0) + (summary.archived_content||0) + (summary.purged_content||0) + (summary.draft_content||0)],
+            ['Total Hours',    Math.round(((summary.total_hours||0) + (summary.archived_hours||0) + (summary.purged_hours||0) + (summary.draft_hours||0)) * 100) / 100],
+            ['',''],
+          ] : []),
           ['OVERALL',''],
           ['Total Published Content (All)', summary.total_content],
           ['Total Published Hours (All)',   summary.total_hours],['',''],
@@ -482,18 +503,18 @@ export default function ContentReportDashboard(){
             [`  ${ct} — Content`, summary?.by_type?.[ct]||0],
             [`  ${ct} — Hours`,   summary.by_type_hours?.[ct]||0],
           ]),['',''],
-          ['MANUAL INSERTION',''],
-          ['Manual Insertion Total Content', summary.manual_content],
-          ['Manual Insertion Total Hours',   summary.manual_hours],
-          ['Manual Insertion Published Content', summary.manual_published_content||0],
-          ['Manual Insertion Published Hours',   summary.manual_published_hours||0],
+          ['MANUAL INGESTION',''],
+          ['Total Manual Ingest Content', summary.manual_content],
+          ['Total Manual Ingest Hours',   summary.manual_hours],
+          ['Manual Ingestion Published Content', summary.manual_published_content||0],
+          ['Manual Ingestion Published Hours',   summary.manual_published_hours||0],
           ...(includeArchivedPurged ? [
-            ['Manual Insertion Archived Content',  summary.manual_archived_content||0],
-            ['Manual Insertion Archived Hours',    summary.manual_archived_hours||0],
-            ['Manual Insertion Purged Content',    summary.manual_purged_content||0],
-            ['Manual Insertion Purged Hours',      summary.manual_purged_hours||0],
-            ['Manual Insertion Draft Content',     summary.manual_draft_content||0],
-            ['Manual Insertion Draft Hours',       summary.manual_draft_hours||0],
+            ['Manual Ingestion Archived Content',  summary.manual_archived_content||0],
+            ['Manual Ingestion Archived Hours',    summary.manual_archived_hours||0],
+            ['Manual Ingestion Purged Content',    summary.manual_purged_content||0],
+            ['Manual Ingestion Purged Hours',      summary.manual_purged_hours||0],
+            ['Manual Ingestion Draft Content',     summary.manual_draft_content||0],
+            ['Manual Ingestion Draft Hours',       summary.manual_draft_hours||0],
           ] : []),['',''],
           ['L2V (Live-to-VOD)',''],
           ['L2V Total Content', summary.l2v_content],
@@ -577,7 +598,7 @@ export default function ContentReportDashboard(){
   )
 
   if (!data) return null
-  const {summary,datewise,date_cols,duration_source,has_local_duration} = data
+  const {summary,datewise,date_cols,monthwise,month_cols,duration_source,has_local_duration} = data
   // The DB-direct flow now returns an immediate lightweight response
   // ({job_id, status:'fetching'}) before the background MySQL/Couchbase
   // fetch completes — summary/datewise/date_cols don't exist yet at that
@@ -592,6 +613,8 @@ export default function ContentReportDashboard(){
   const reportTypes = allReportTypes.filter(ct =>
     (summary?.by_type?.[ct] || 0) > 0 || (summary?.by_type_hours?.[ct] || 0) > 0)
   const METRICS_RAW = [
+    {metric:'Total Contents',group:'overall'},
+    {metric:'Total Hours',  group:'overall'},
     {metric:'Total Published Content',group:'overall'},
     {metric:'Total Published Hours',  group:'overall'},
     {metric:'Archived Content',group:'archived'},{metric:'Archived Hours',group:'archived'},
@@ -711,7 +734,15 @@ export default function ContentReportDashboard(){
 
       {/* Tabs */}
       <div style={{background:'#fff',borderBottom:`1px solid ${C.border}`,padding:'0 24px',display:'flex'}}>
-        {[['summary','📋 Summary'],['datewise','📅 Date-wise']].map(([id,label])=>(
+        {[
+          ['summary','📋 Summary'],
+          ['datewise','📅 Date-wise'],
+          // Only shown when the report actually spans more than one
+          // calendar month -- for a single month, build_monthwise() would
+          // just produce one column, identical to the Total column, adding
+          // no value over the Date-wise tab that's already there.
+          ...(month_cols && month_cols.length > 1 ? [['monthwise','🗓️ Month-wise']] : []),
+        ].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             padding:'11px 18px',fontSize:13,fontWeight:tab===id?700:500,
             color:tab===id?C.navy:C.muted,
@@ -738,6 +769,14 @@ export default function ContentReportDashboard(){
         {tab==='datewise' && (
           <DateWiseTab
             date_cols={date_cols} datewise={datewise} METRICS={METRICS} GRP_COLOR={GRP_COLOR} GRP_BG={GRP_BG}
+            includeArchivedPurged={includeArchivedPurged} setIncludeArchivedPurged={setIncludeArchivedPurged}
+            handleDownload={handleDownload} dlLoading={dlLoading}
+          />
+        )}
+
+        {tab==='monthwise' && month_cols && month_cols.length > 1 && (
+          <MonthWiseTab
+            month_cols={month_cols} monthwise={monthwise} METRICS={METRICS} GRP_COLOR={GRP_COLOR} GRP_BG={GRP_BG}
             includeArchivedPurged={includeArchivedPurged} setIncludeArchivedPurged={setIncludeArchivedPurged}
             handleDownload={handleDownload} dlLoading={dlLoading}
           />

@@ -5,6 +5,18 @@ import SecHdr from "./SecHdr.jsx"
 export default function SummaryTab({ summary, includeArchivedPurged, reportTypes }) {
   return (
     <>
+      {includeArchivedPurged && (
+        <>
+          <SecHdr color={C.navy}>Total (All Statuses)</SecHdr>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
+            <KpiCard label="Total Contents" value={summary.all_content||0} color={C.navy}
+              sub="Published + Archived + Purged + Draft"/>
+            <KpiCard label="Total Hours"    value={`${summary.all_hours||0}h`} color={C.navy}
+              sub="Published + Archived + Purged + Draft"/>
+          </div>
+        </>
+      )}
+
       <SecHdr color={C.blue}>Overall Published</SecHdr>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
         <KpiCard label="Total Published Content" value={summary.total_content} color={C.blue}/>
@@ -44,7 +56,7 @@ export default function SummaryTab({ summary, includeArchivedPurged, reportTypes
 
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20,marginTop:4}}>
         <div>
-          <SecHdr color={C.amber}>Manual Insertion</SecHdr>
+          <SecHdr color={C.amber}>Manual Ingestion</SecHdr>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
             <KpiCard label="Total Manual Ingest Content" value={summary.manual_content} color={C.amber}/>
             <KpiCard label="Total Manual Ingest Hours" value={`${summary.manual_hours}h`} color={C.amber}/>
