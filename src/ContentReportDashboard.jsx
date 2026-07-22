@@ -14,6 +14,7 @@ export default function ContentReportDashboard(){
   const [drag,setDrag]         = useState(false)
   const [tab,setTab]           = useState('summary')
   const [dlLoading,setDlLoading]= useState(false)
+  const [dlWaitMsg,setDlWaitMsg] = useState('')
   const [loadingMsg,setLoadingMsg] = useState('Processing file...')
   const [apiBase,setApiBase]   = useState(API_BASE)
   const [showApi,setShowApi]   = useState(false)
@@ -411,24 +412,38 @@ export default function ContentReportDashboard(){
   const handleDownload = async () => {
     setDlLoading(true)
     try {
-      // Background polling (pollUntilDownloadReady) may have given up before
-      // the backend actually finished, or the user may simply be clicking
-      // this well after that poll's window closed. Rather than trusting a
-      // possibly-stale `data.download_ready` flag, do one live check right
-      // now — this catches the common case where the styled Excel finished
-      // on the backend a while ago but nothing was left polling to notice.
+      // The styled Excel is built server-side in the background and can
+      // genuinely take a few minutes for a large report (many Couchbase
+      // batches, plus the metadata + encode-index MySQL lookups, plus now
+      // building the split Date-wise/Month-wise sheets). Relying only on
+      // background polling (pollUntilDownloadReady) or a single live check
+      // here has repeatedly proven too fragile -- either can miss the
+      // window and silently fall back to the plain, unstyled client-side
+      // export. Instead, actively wait in a foreground loop with visible
+      // progress, for a much longer ceiling, and only fall back as a truly
+      // last resort with a clear, explicit warning -- never silently.
       let downloadReady = data?.download_ready
-      let jobIdForCheck = data?.job_id
-      if (!downloadReady && jobIdForCheck) {
+      const jobIdForCheck = data?.job_id
+
+      const MAX_WAIT_ATTEMPTS = 120   // 120 * 5s = 10 minutes of active waiting
+      let attempt = 0
+      while (!downloadReady && jobIdForCheck && attempt < MAX_WAIT_ATTEMPTS) {
         try {
           const res = await fetch(`${apiBase}/status/${jobIdForCheck}`, {headers:{'ngrok-skip-browser-warning':'1'}})
           if (res.ok) {
             const job = await res.json()
             downloadReady = job.download_ready
-            if (downloadReady) setData(prev => prev ? { ...prev, download_ready: true } : prev)
+            if (downloadReady) {
+              setData(prev => prev ? { ...prev, download_ready: true } : prev)
+              break
+            }
           }
-        } catch (e) { /* live check failed — fall through to the flag we already had */ }
+        } catch (e) { /* transient network hiccup — keep trying */ }
+        attempt++
+        setDlWaitMsg(`Preparing your report… (${attempt * 5}s)`)
+        await new Promise(r => setTimeout(r, 5000))
       }
+      setDlWaitMsg('')
 
       if (downloadReady) {
         // Backend has the Excel ready — stream it directly (rebuilt server-side
@@ -708,7 +723,7 @@ export default function ContentReportDashboard(){
           </label>
           <button onClick={handleDownload} disabled={dlLoading}
             style={{padding:'8px 18px',borderRadius:8,border:'none',background:'#2E75B6',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',opacity:dlLoading?0.7:1}}>
-            {dlLoading?'⏳ Downloading...':'⬇ Download Excel'}
+            {dlLoading ? (dlWaitMsg || '⏳ Downloading...') : '⬇ Download Excel'}
           </button>
           <button onClick={()=>{setData(null);setError(null)}}
             style={{padding:'8px 14px',borderRadius:8,border:'1px solid rgba(255,255,255,0.3)',background:'transparent',color:'#fff',fontSize:13,cursor:'pointer'}}>
