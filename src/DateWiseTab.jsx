@@ -2,28 +2,11 @@ import { C, round } from "./reportUtils.js"
 
 export default function DateWiseTab({
   date_cols, datewise, METRICS, GRP_COLOR, GRP_BG,
-  includeArchivedPurged, setIncludeArchivedPurged,
-  handleDownload, dlLoading,
 }) {
   return (
     <>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+      <div style={{marginBottom:12}}>
         <div style={{fontSize:13,color:C.muted}}>{date_cols.length} days · {date_cols[0]} to {date_cols[date_cols.length-1]}</div>
-        <div style={{display:'flex',gap:12,alignItems:'center'}}>
-          <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.navy,cursor:'pointer',whiteSpace:'nowrap'}}>
-            <input
-              type="checkbox"
-              checked={includeArchivedPurged}
-              onChange={e=>setIncludeArchivedPurged(e.target.checked)}
-              style={{width:14,height:14,cursor:'pointer'}}
-            />
-            Include Archived, Purged &amp; Draft
-          </label>
-          <button onClick={handleDownload} disabled={dlLoading}
-            style={{padding:'7px 16px',borderRadius:7,border:`1px solid ${C.blue}`,background:'#EEF4FF',color:C.blue,fontSize:12,fontWeight:700,cursor:'pointer'}}>
-            {dlLoading?'⏳':'⬇'} Download Excel
-          </button>
-        </div>
       </div>
       <div style={{overflowX:'auto',borderRadius:10,border:`1px solid ${C.border}`,background:C.card}}>
         <table style={{borderCollapse:'collapse',fontSize:12,minWidth:'max-content',width:'100%'}}>

@@ -408,7 +408,7 @@ export default function ContentReportDashboard(){
     }
   },[apiBase, pollJobStatus])
 
-  const handleDownload = async ({ monthWise = false } = {}) => {
+  const handleDownload = async () => {
     setDlLoading(true)
     try {
       // Background polling (pollUntilDownloadReady) may have given up before
@@ -432,8 +432,11 @@ export default function ContentReportDashboard(){
 
       if (downloadReady) {
         // Backend has the Excel ready — stream it directly (rebuilt server-side
-        // if include_archived_purged or month_wise differ from the cached version)
-        const res = await fetch(`${apiBase}/download?include_archived_purged=${includeArchivedPurged}&month_wise=${monthWise}`, {headers:{'ngrok-skip-browser-warning':'1'}})
+        // if include_archived_purged differs from the cached version). The
+        // Excel always contains both a Date-wise sheet (15-day-split or
+        // per-month blocks, depending on the report's date range) and a
+        // Month-wise sheet (when relevant) -- no separate flag needed for this.
+        const res = await fetch(`${apiBase}/download?include_archived_purged=${includeArchivedPurged}`, {headers:{'ngrok-skip-browser-warning':'1'}})
         if (!res.ok) throw new Error('Download failed')
         const blob = await res.blob()
         const url  = URL.createObjectURL(blob)
@@ -773,16 +776,12 @@ export default function ContentReportDashboard(){
         {tab==='datewise' && (
           <DateWiseTab
             date_cols={date_cols} datewise={datewise} METRICS={METRICS} GRP_COLOR={GRP_COLOR} GRP_BG={GRP_BG}
-            includeArchivedPurged={includeArchivedPurged} setIncludeArchivedPurged={setIncludeArchivedPurged}
-            handleDownload={handleDownload} dlLoading={dlLoading}
           />
         )}
 
         {tab==='monthwise' && month_cols && month_cols.length > 1 && (
           <MonthWiseTab
             month_cols={month_cols} monthwise={monthwise} METRICS={METRICS} GRP_COLOR={GRP_COLOR} GRP_BG={GRP_BG}
-            includeArchivedPurged={includeArchivedPurged} setIncludeArchivedPurged={setIncludeArchivedPurged}
-            handleDownload={handleDownload} dlLoading={dlLoading}
           />
         )}
       </div>
