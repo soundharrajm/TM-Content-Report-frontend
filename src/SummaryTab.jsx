@@ -5,17 +5,18 @@ import SecHdr from "./SecHdr.jsx"
 export default function SummaryTab({ summary, includeArchivedPurged, reportTypes }) {
   return (
     <>
-      {includeArchivedPurged && (
-        <>
-          <SecHdr color={C.navy}>Total (All Statuses)</SecHdr>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-            <KpiCard label="Total Contents" value={summary.all_content||0} color={C.navy}
-              sub="Published + Archived + Purged + Draft"/>
-            <KpiCard label="Total Hours"    value={`${summary.all_hours||0}h`} color={C.navy}
-              sub="Published + Archived + Purged + Draft"/>
-          </div>
-        </>
-      )}
+      {/* Always shown regardless of includeArchivedPurged, matching the
+          backend's build_excel() -- Total Contents/Hours represent the full
+          all-status total. Note: when the toggle is off, this value still
+          includes archived/purged/draft internally even though those
+          individual breakdown sections below stay hidden -- by design. */}
+      <SecHdr color={C.navy}>Total (All Statuses)</SecHdr>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
+        <KpiCard label="Total Contents" value={summary.all_content||0} color={C.navy}
+          sub="Published + Archived + Purged + Draft"/>
+        <KpiCard label="Total Hours"    value={`${summary.all_hours||0}h`} color={C.navy}
+          sub="Published + Archived + Purged + Draft"/>
+      </div>
 
       <SecHdr color={C.blue}>Overall Published</SecHdr>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
