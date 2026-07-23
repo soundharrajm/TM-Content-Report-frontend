@@ -115,8 +115,12 @@ export default function SummaryTab({ summary, includeArchivedPurged, reportTypes
       {/* Full table */}
       <SecHdr color={'#0E6655'}>DVB Processed</SecHdr>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:12}}>
-        <KpiCard label="DVB Processed Content" value={summary.dvb_content||0} color={'#0E6655'}/>
-        <KpiCard label="DVB Processed Hours"   value={`${summary.dvb_hours||0}h`} color={'#0E6655'}/>
+        <div title="Content processed via Harmonic VOS360 (Telecom Malaysia only) -- a separate pipeline from Manual/L2V ingestion, not included in Total Contents/Hours above.">
+          <KpiCard label="Total DVB Processed Content" value={summary.dvb_content||0} color={'#0E6655'}/>
+        </div>
+        <div title="Content processed via Harmonic VOS360 (Telecom Malaysia only) -- a separate pipeline from Manual/L2V ingestion, not included in Total Contents/Hours above.">
+          <KpiCard label="Total DVB Processed Hours"   value={`${summary.dvb_hours||0}h`} color={'#0E6655'}/>
+        </div>
       </div>
 
       <SecHdr color={C.navy}>Full Breakdown</SecHdr>

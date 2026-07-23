@@ -21,7 +21,7 @@ export default function DateWiseTab({
             </tr>
           </thead>
           <tbody>
-            {METRICS.map(({metric,label,group},ri)=>{
+            {METRICS.map(({metric,label,group,tooltip},ri)=>{
               const row  = datewise.find(r=>r.Metric===metric)||{}
               const vals = date_cols.map(dc=>row[dc]||0)
               const total= round(vals.reduce((a,b)=>a+b,0))
@@ -29,7 +29,7 @@ export default function DateWiseTab({
               const bg   = ri%2===0?GRP_BG[group]:'#fff'
               return (
                 <tr key={metric} style={{background:bg,borderBottom:`1px solid ${C.border}`}}>
-                  <td style={{padding:'9px 14px',fontWeight:700,color:gc,position:'sticky',left:0,background:bg,borderRight:`2px solid ${C.border}`}}>{label||metric}</td>
+                  <td title={tooltip} style={{padding:'9px 14px',fontWeight:700,color:gc,position:'sticky',left:0,background:bg,borderRight:`2px solid ${C.border}`,cursor:tooltip?'help':'default'}}>{label||metric}</td>
                   {vals.map((v,ci)=>(
                     <td key={ci} style={{padding:'9px 8px',textAlign:'center',fontWeight:v>0?700:400,color:v>0?gc:'#ccc'}}>{v>0?v:'—'}</td>
                   ))}

@@ -653,7 +653,10 @@ export default function ContentReportDashboard(){
     {metric:'L2V Archived Content',group:'l2v'},{metric:'L2V Archived Hours',group:'l2v'},
     {metric:'L2V Purged Content',group:'l2v'},{metric:'L2V Purged Hours',group:'l2v'},
     {metric:'L2V Draft Content',group:'l2v'},{metric:'L2V Draft Hours',group:'l2v'},
-    {metric:'DVB Content',group:'dvb'},{metric:'DVB Hours',group:'dvb'},
+    {metric:'DVB Content',group:'dvb',label:'Total DVB Processed Content',
+     tooltip:'Content processed via Harmonic VOS360 (Telecom Malaysia only) -- a separate pipeline from Manual/L2V ingestion.'},
+    {metric:'DVB Hours',group:'dvb',label:'Total DVB Processed Hours',
+     tooltip:'Content processed via Harmonic VOS360 (Telecom Malaysia only) -- a separate pipeline from Manual/L2V ingestion.'},
   ]
   // Hide any Date-wise row entirely empty across the whole period (all dashes) —
   // except the headline Total Published rows, which stay visible even at 0
