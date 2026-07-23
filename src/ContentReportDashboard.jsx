@@ -491,7 +491,8 @@ export default function ContentReportDashboard(){
           'L2V Content','L2V Hours',
           'L2V Published Content','L2V Published Hours',
           ...(includeArchivedPurged ? ['L2V Archived Content','L2V Archived Hours','L2V Purged Content','L2V Purged Hours','L2V Draft Content','L2V Draft Hours'] : []),
-          ...(includeArchivedPurged ? ['Archived Content','Archived Hours','Purged Content','Purged Hours','Draft Content','Draft Hours'] : [])]
+          ...(includeArchivedPurged ? ['Archived Content','Archived Hours','Purged Content','Purged Hours','Draft Content','Draft Hours'] : []),
+          'DVB Content','DVB Hours']
 
         const s = [
           ['TM Content Publishing Summary',''],['',''],
@@ -550,7 +551,10 @@ export default function ContentReportDashboard(){
             ['L2V Purged Hours',      summary.l2v_purged_hours||0],
             ['L2V Draft Content',     summary.l2v_draft_content||0],
             ['L2V Draft Hours',       summary.l2v_draft_hours||0],
-          ] : []),
+          ] : []),['',''],
+          ['DVB PROCESSED',''],
+          ['Total DVB Processed Content', summary.dvb_content||0],
+          ['Total DVB Processed Hours',   summary.dvb_hours||0],
         ]
         const ws1 = XLSX.utils.aoa_to_sheet(s)
         ws1['!cols']=[{wch:42},{wch:18}]
@@ -558,10 +562,16 @@ export default function ContentReportDashboard(){
 
         const hdr = ['Metric',...date_cols,'Total']
         const rows = [hdr]
+        // DVB's internal backend field names ('DVB Content'/'DVB Hours')
+        // differ from the nicer display labels used everywhere else in this
+        // report -- this map keeps the lookup against the real backend data
+        // correct while still showing the same label the live UI and the
+        // styled backend Excel already use.
+        const DISPLAY_LABEL = {'DVB Content': 'Total DVB Processed Content', 'DVB Hours': 'Total DVB Processed Hours'}
         metrics.forEach(m=>{
           const row = datewise.find(r=>r.Metric===m)||{}
           const vals= date_cols.map(dc=>row[dc]||0)
-          rows.push([m,...vals,round(vals.reduce((a,b)=>a+b,0))])
+          rows.push([DISPLAY_LABEL[m]||m,...vals,round(vals.reduce((a,b)=>a+b,0))])
         })
         const ws2 = XLSX.utils.aoa_to_sheet(rows)
         ws2['!cols']=[{wch:28},...date_cols.map(()=>({wch:9})),{wch:10}]
@@ -662,7 +672,7 @@ export default function ContentReportDashboard(){
   // except the headline Total Published rows, which stay visible even at 0
   // so the report clearly communicates "nothing published" rather than the
   // whole overall section silently vanishing.
-  const ALWAYS_SHOW = new Set(['Total Published Content', 'Total Published Hours'])
+  const ALWAYS_SHOW = new Set(['Total Published Content', 'Total Published Hours', 'DVB Content', 'DVB Hours'])
   const METRICS = METRICS_RAW.filter(({metric}) => {
     if (ALWAYS_SHOW.has(metric)) return true
     const row = datewise.find(r=>r.Metric===metric) || {}
