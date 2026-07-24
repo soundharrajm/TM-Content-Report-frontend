@@ -506,7 +506,8 @@ export default function ContentReportDashboard(){
         const { summary, datewise, date_cols } = data
         const wb = XLSX.utils.book_new()
         const reportTypes = Object.keys(summary?.by_type || {}).length ? Object.keys(summary.by_type) : CONTENT_TYPES
-        const metrics = ['Total Published Content','Total Published Hours',
+        const metrics = ['Total Contents','Total Hours',
+          'Total Published Content','Total Published Hours',
           ...reportTypes,'Manual Content','Manual Hours','Manual Published Content','Manual Published Hours',
           ...(includeArchivedPurged ? ['Manual Archived Content','Manual Archived Hours','Manual Purged Content','Manual Purged Hours','Manual Draft Content','Manual Draft Hours'] : []),
           'L2V Content','L2V Hours',
@@ -517,17 +518,18 @@ export default function ContentReportDashboard(){
 
         const s = [
           ['TM Content Publishing Summary',''],['',''],
-          ...(includeArchivedPurged ? [
-            ['TOTAL (ALL STATUSES)',''],
-            // All-status totals: Published + Archived + Purged + Draft combined.
-            // Only shown when includeArchivedPurged is on, same as the backend's
-            // build_excel() -- these values incorporate archived/purged/draft
-            // data, so showing them while hiding that breakdown would be
-            // inconsistent.
-            ['Total Contents', (summary.total_content||0) + (summary.archived_content||0) + (summary.purged_content||0) + (summary.draft_content||0)],
-            ['Total Hours',    Math.round(((summary.total_hours||0) + (summary.archived_hours||0) + (summary.purged_hours||0) + (summary.draft_hours||0)) * 100) / 100],
-            ['',''],
-          ] : []),
+          ['TOTAL (ALL STATUSES)',''],
+          // Always shown regardless of includeArchivedPurged -- these are
+          // grand totals across every status (Published+Archived+Purged+
+          // Draft combined via summary.all_content/all_hours, same fields
+          // used everywhere else in the app for this), not part of the
+          // archived/purged/draft BREAKDOWN itself, so gating them behind
+          // that toggle was inconsistent with how the real backend
+          // (build_excel()) and the live UI (SummaryTab.jsx) already treat
+          // these two specifically.
+          ['Total Contents', summary.all_content||0],
+          ['Total Hours',    summary.all_hours||0],
+          ['',''],
           ['OVERALL',''],
           ['Total Published Content (All)', summary.total_content],
           ['Total Published Hours (All)',   summary.total_hours],['',''],
