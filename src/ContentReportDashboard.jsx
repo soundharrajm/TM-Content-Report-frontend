@@ -514,7 +514,7 @@ export default function ContentReportDashboard(){
           'L2V Published Content','L2V Published Hours',
           ...(includeArchivedPurged ? ['L2V Archived Content','L2V Archived Hours','L2V Purged Content','L2V Purged Hours','L2V Draft Content','L2V Draft Hours'] : []),
           ...(includeArchivedPurged ? ['Archived Content','Archived Hours','Purged Content','Purged Hours','Draft Content','Draft Hours'] : []),
-          'DVB Content','DVB Hours']
+          ...(includeDvbInDownload ? ['DVB Content','DVB Hours'] : [])]
 
         const s = [
           ['TM Content Publishing Summary',''],['',''],
@@ -574,10 +574,13 @@ export default function ContentReportDashboard(){
             ['L2V Purged Hours',      summary.l2v_purged_hours||0],
             ['L2V Draft Content',     summary.l2v_draft_content||0],
             ['L2V Draft Hours',       summary.l2v_draft_hours||0],
-          ] : []),['',''],
-          ['DVB PROCESSED',''],
-          ['Total DVB Processed Content', summary.dvb_content||0],
-          ['Total DVB Processed Hours',   summary.dvb_hours||0],
+          ] : []),
+          ...(includeDvbInDownload ? [
+            ['',''],
+            ['DVB PROCESSED',''],
+            ['Total DVB Processed Content', summary.dvb_content||0],
+            ['Total DVB Processed Hours',   summary.dvb_hours||0],
+          ] : []),
         ]
         const ws1 = XLSX.utils.aoa_to_sheet(s)
         ws1['!cols']=[{wch:42},{wch:18}]
