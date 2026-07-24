@@ -19,6 +19,7 @@ export default function ContentReportDashboard(){
   const [apiBase,setApiBase]   = useState(API_BASE)
   const [showApi,setShowApi]   = useState(false)
   const [includeArchivedPurged, setIncludeArchivedPurged] = useState(true)
+  const [includeDvb, setIncludeDvb] = useState(true)
   const [projects, setProjects] = useState([])
   const [projectId, setProjectId] = useState('default')
   const [projectsError, setProjectsError] = useState(null)
@@ -202,6 +203,7 @@ export default function ContentReportDashboard(){
         progress:        job.progress,
         batches_done:    job.batches_done,
         batches_total:   job.batches_total,
+        stage_message:   job.stage_message,
       } : prev)
 
       // Stop polling when done or error
@@ -282,6 +284,7 @@ export default function ContentReportDashboard(){
           months: selectedMonths,
           year: selectedYear,
           include_archived_purged: includeArchivedPurged,
+          include_dvb: includeDvb,
         }),
       })
       if (!res.ok) {
@@ -332,7 +335,7 @@ export default function ContentReportDashboard(){
       setError(err.message)
       setLoading(false)
     }
-  }, [apiBase, projectId, selectedMonths, selectedYear, includeArchivedPurged, pollJobStatus])
+  }, [apiBase, projectId, selectedMonths, selectedYear, includeArchivedPurged, includeDvb, pollJobStatus])
 
   const processFile = useCallback(async(file) => {
     clearActivePoll()  // stop any previous job's polling before starting a new one
@@ -711,8 +714,11 @@ export default function ContentReportDashboard(){
                   padding:'1px 7px', fontSize:11,
                   animation:'pulse 1.5s ease-in-out infinite',
                 }}>
-                  ⏳ Fetching from MySQL/Couchbase — {data.progress ?? 0}%
-                  {data.batches_total ? ` (batch ${data.batches_done}/${data.batches_total})` : ''}
+                  {data.stage_message
+                    ? `⏳ ${data.stage_message}`
+                    : <>⏳ Fetching from MySQL/Couchbase — {data.progress ?? 0}%
+                        {data.batches_total ? ` (batch ${data.batches_done}/${data.batches_total})` : ''}</>
+                  }
                 </span>
                 <span style={{width:80, height:5, background:'rgba(255,255,255,0.2)', borderRadius:4, overflow:'hidden', display:'inline-block'}}>
                   <span style={{
@@ -733,6 +739,18 @@ export default function ContentReportDashboard(){
               style={{width:14,height:14,cursor:'pointer'}}
             />
             Include Archived, Purged &amp; Draft
+          </label>
+          <label
+            style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#fff',cursor:'pointer',whiteSpace:'nowrap'}}
+            title="DVB (Harmonic) data has no server-side date filtering -- fetching it can take up to 30 minutes on a full run. Uncheck for a fast report when DVB numbers aren't needed this time."
+          >
+            <input
+              type="checkbox"
+              checked={includeDvb}
+              onChange={e=>setIncludeDvb(e.target.checked)}
+              style={{width:14,height:14,cursor:'pointer'}}
+            />
+            Include DVB (may add up to 30 min)
           </label>
           <button onClick={handleDownload} disabled={dlLoading}
             style={{padding:'8px 18px',borderRadius:8,border:'none',background:'#2E75B6',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer',opacity:dlLoading?0.7:1}}>
