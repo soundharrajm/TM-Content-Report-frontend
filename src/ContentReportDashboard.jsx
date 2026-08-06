@@ -14,7 +14,7 @@ import MonthWiseTab from "./MonthWiseTab.jsx"
 // component for what Apply/Clear actually do.
 function PortOverrideControl({ manualPort, setManualPort, portStatus, applyManualPort, testPort, apiBase, dark }) {
   const dot = { width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-    background: portStatus === 'ok' ? '#1E7E34' : portStatus === 'fail' ? '#922B21' : portStatus === 'checking' ? '#BF8F00' : (dark ? 'rgba(255,255,255,0.35)' : '#D0DAF0') }
+    background: portStatus === 'ok' ? '#166534' : portStatus === 'fail' ? '#922B21' : portStatus === 'checking' ? '#BF8F00' : (dark ? 'rgba(255,255,255,0.35)' : '#D0DAF0') }
   const textColor = dark ? '#fff' : '#1a1a2e'
   const inputStyle = { padding: '6px 9px', borderRadius: 6, border: dark ? '1px solid rgba(255,255,255,0.3)' : '1px solid #D0DAF0', fontSize: 12, fontFamily: 'inherit', width: 128, background: dark ? 'rgba(255,255,255,0.08)' : '#fff', color: textColor }
   const btnBase = { padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
