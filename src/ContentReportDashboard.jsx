@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react"
 import * as XLSX from "xlsx"
-import { API_BASE, C, CONTENT_TYPES, round, normalizeRow, parseLocally } from "./reportUtils.js"
+import { API_BASE, resolveApiBase, C, CONTENT_TYPES, round, normalizeRow, parseLocally } from "./reportUtils.js"
 import UploadScreen from "./UploadScreen.jsx"
 import SummaryTab from "./SummaryTab.jsx"
 import DateWiseTab from "./DateWiseTab.jsx"
@@ -70,6 +70,17 @@ export default function ContentReportDashboard(){
 
   const toggleMonth = (m) => setSelectedMonths(prev =>
     prev.includes(m) ? prev.filter(x=>x!==m) : [...prev, m].sort((a,b)=>a-b))
+
+  // Resolves the actual reachable backend base on mount (tries the
+  // configured API_BASE first, falls back to scanning local ports if
+  // that's unreachable -- see resolveApiBase in reportUtils.js). Updating
+  // apiBase here is enough on its own: the /projects-loading effect right
+  // below already depends on [apiBase], so it automatically re-fires
+  // once this resolves to something different from the initial static
+  // value.
+  useEffect(() => {
+    resolveApiBase().then(setApiBase)
+  }, [])
 
   // Load available projects (each with its own DB config) for the dropdown
   useEffect(() => {

@@ -4,6 +4,87 @@
 const API_BASE = import.meta.env.VITE_API_BASE
   || 'https://womanless-spent-scale.ngrok-free.dev'
 
+// ngrok's free tier shows an interstitial "this site is served by ngrok"
+// warning page to ALL browser requests, before they ever reach the actual
+// backend -- that page has none of the backend's own CORS headers, since
+// FastAPI never even sees the request. This header tells ngrok to skip
+// that page entirely and forward straight through. Has no effect (and is
+// harmless) if the backend isn't behind ngrok at all.
+const FETCH_HEADERS = { 'ngrok-skip-browser-warning': '1' }
+
+// Resolves which backend base URL to actually use, checking reachability
+// at RUNTIME rather than trusting the build-time API_BASE blindly. Tries
+// API_BASE first (the configured VITE_API_BASE, or the hardcoded ngrok
+// fallback above); if that doesn't respond within a short timeout, scans
+// a list of candidate ports on localhost and uses whichever one actually
+// answers -- covering the case where a specific user runs their OWN
+// backend locally instead of relying on the shared one. Caches the
+// result in-memory for the rest of the session once resolved, so every
+// subsequent fetch call doesn't re-run this check -- only re-checks if
+// explicitly asked to (see forceRecheck below).
+//
+// Checking res.ok alone is NOT enough -- confirmed real-world case in
+// the sibling metadata ingestion report app: a stale/dead ngrok tunnel
+// (or ngrok's own interstitial warning page) can still return a 200
+// status without this actually being the real backend behind it.
+// Validating the exact response body ({"status": "ok"}, from the new
+// /health route added alongside this) catches that -- anything else
+// (wrong JSON, HTML, a differently-shaped response) is correctly
+// treated as unreachable, triggering the fallback instead of silently
+// trusting a dead tunnel.
+//
+// This does NOT solve reachability by itself -- if API_BASE is
+// unreachable AND the user has nothing running on any of the candidate
+// local ports either, this correctly falls through to reporting that
+// (via the caller's own error handling), rather than silently defaulting
+// to a URL that doesn't work.
+//
+// Single place to change which local ports get tried: edit this array,
+// or set VITE_LOCAL_PORTS (comma-separated, e.g. "8000,8080") to
+// override it without touching code at all.
+const LOCAL_FALLBACK_PORTS = (import.meta.env.VITE_LOCAL_PORTS
+  ? import.meta.env.VITE_LOCAL_PORTS.split(',').map(p => p.trim())
+  : ['8000', '8080', '8888', '5000']
+)
+
+let _resolvedApiBase = null
+
+async function resolveApiBase(forceRecheck = false) {
+  if (_resolvedApiBase && !forceRecheck) return _resolvedApiBase
+
+  const tryReach = async (base, timeoutMs = 2500) => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const res = await fetch(`${base}/health`, { headers: FETCH_HEADERS, signal: controller.signal })
+      if (!res.ok) return false
+      const data = await res.json()
+      return data?.status === 'ok'
+    } catch {
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  if (await tryReach(API_BASE)) {
+    _resolvedApiBase = API_BASE
+    return _resolvedApiBase
+  }
+
+  for (const port of LOCAL_FALLBACK_PORTS) {
+    const candidate = `http://localhost:${port}`
+    if (candidate === API_BASE) continue
+    if (await tryReach(candidate)) {
+      _resolvedApiBase = candidate
+      return _resolvedApiBase
+    }
+  }
+
+  _resolvedApiBase = API_BASE
+  return _resolvedApiBase
+}
+
 const C = {
   navy:'#1F3864',blue:'#2E75B6',teal:'#0D7377',
   amber:'#BF8F00',purple:'#6B35A0',green:'#1E7E34',
@@ -212,4 +293,4 @@ function parseLocally(rows) {
 
 // ── Components ────────────────────────────────────────────────────────────────
 
-export { API_BASE, C, CONTENT_TYPES, CT_MAP, round, formatDateCol, normalizeRow, parseLocally, CANONICAL_COLUMNS, DATE_COLUMN_PRIORITY }
+export { API_BASE, resolveApiBase, C, CONTENT_TYPES, CT_MAP, round, formatDateCol, normalizeRow, parseLocally, CANONICAL_COLUMNS, DATE_COLUMN_PRIORITY }
