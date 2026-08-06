@@ -6,6 +6,49 @@ import SummaryTab from "./SummaryTab.jsx"
 import DateWiseTab from "./DateWiseTab.jsx"
 import MonthWiseTab from "./MonthWiseTab.jsx"
 
+// ── Localhost port override control ─────────────────────────────────────────
+// Shared between the upload screen (no report generated yet) and the main
+// report header (once one has) so the person can point this dashboard at
+// their own local backend from either screen, without needing to touch
+// Vercel env vars or code. See applyManualPort/testPort in the main
+// component for what Apply/Clear actually do.
+function PortOverrideControl({ manualPort, setManualPort, portStatus, applyManualPort, testPort, apiBase, dark }) {
+  const dot = { width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+    background: portStatus === 'ok' ? '#1E7E34' : portStatus === 'fail' ? '#922B21' : portStatus === 'checking' ? '#BF8F00' : (dark ? 'rgba(255,255,255,0.35)' : '#D0DAF0') }
+  const textColor = dark ? '#fff' : '#1a1a2e'
+  const inputStyle = { padding: '6px 9px', borderRadius: 6, border: dark ? '1px solid rgba(255,255,255,0.3)' : '1px solid #D0DAF0', fontSize: 12, fontFamily: 'inherit', width: 128, background: dark ? 'rgba(255,255,255,0.08)' : '#fff', color: textColor }
+  const btnBase = { padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} title={`Currently talking to: ${apiBase}`}>
+      <span style={dot} />
+      <input
+        type="number"
+        value={manualPort}
+        onChange={e => setManualPort(e.target.value)}
+        onBlur={e => testPort(e.target.value)}
+        placeholder="Port (blank = ngrok)"
+        style={inputStyle}
+      />
+      <button
+        onClick={() => applyManualPort(manualPort)}
+        title="Connect directly to http://localhost:{port} -- leave the field empty and click this to go back to ngrok / auto-detect"
+        style={{ ...btnBase, border: 'none', background: dark ? '#2E75B6' : '#1F3864', color: '#fff', fontWeight: 600 }}
+      >
+        Apply
+      </button>
+      {manualPort && (
+        <button
+          onClick={() => applyManualPort('')}
+          title="Clear the manual port and go back to ngrok / auto-detect"
+          style={{ ...btnBase, border: dark ? '1px solid rgba(255,255,255,0.3)' : '1px solid #D0DAF0', background: 'transparent', color: textColor }}
+        >
+          Clear
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function ContentReportDashboard(){
   const [data,setData]         = useState(null)
@@ -18,6 +61,13 @@ export default function ContentReportDashboard(){
   const [loadingMsg,setLoadingMsg] = useState('Processing file...')
   const [apiBase,setApiBase]   = useState(API_BASE)
   const [showApi,setShowApi]   = useState(false)
+  // Direct localhost-port override -- when set, requests go straight to
+  // http://localhost:{port}, skipping resolveApiBase()'s own ngrok-first/
+  // port-scan logic entirely (same pattern as the sibling Metadata
+  // Ingestion Report app). Empty (the default) falls back to that
+  // existing behavior unchanged. Persisted so it survives a page reload.
+  const [manualPort, setManualPort] = useState(() => localStorage.getItem('content_report_manual_port') || '')
+  const [portStatus, setPortStatus] = useState(null) // null | 'checking' | 'ok' | 'fail'
   const [includeArchivedPurged, setIncludeArchivedPurged] = useState(true)
   const [includeDvb, setIncludeDvb] = useState(true)
   // Separate from includeDvb above -- that one controls whether the upload
@@ -79,8 +129,61 @@ export default function ContentReportDashboard(){
   // once this resolves to something different from the initial static
   // value.
   useEffect(() => {
+    // A saved manual port means "always talk to my own local backend,
+    // full stop" -- skip resolveApiBase()'s network probing (ngrok
+    // first, then a scan of candidate ports) entirely rather than
+    // racing it against an explicit choice the person already made.
+    if (manualPort) {
+      setApiBase(`http://localhost:${manualPort}`)
+      return
+    }
     resolveApiBase().then(setApiBase)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Applies (or clears) the manual port override. Saving a port switches
+  // apiBase straight to http://localhost:{port} with no reachability
+  // check gating it -- typing a port already means the person knows
+  // what they're doing, and gating it behind a health check would just
+  // make "my backend takes a second to start" look like a rejected
+  // save. portStatus (via testPort below) is purely informational, shown
+  // next to the field, and never blocks the switch itself. Clearing the
+  // field and applying re-runs the normal resolveApiBase() flow (ngrok,
+  // then the local port scan) exactly like a fresh page load with
+  // nothing saved.
+  const applyManualPort = (rawPort) => {
+    const port = rawPort.trim()
+    setPortStatus(null)
+    if (port) {
+      localStorage.setItem('content_report_manual_port', port)
+      setManualPort(port)
+      setApiBase(`http://localhost:${port}`)
+    } else {
+      localStorage.removeItem('content_report_manual_port')
+      setManualPort('')
+      resolveApiBase(true).then(setApiBase)
+    }
+  }
+
+  // Optional reachability check for the currently-typed port -- purely
+  // to show a green/red dot next to the field; never gates Apply/Clear
+  // (see applyManualPort above).
+  const testPort = async (rawPort) => {
+    const port = rawPort.trim()
+    if (!port) { setPortStatus(null); return }
+    setPortStatus('checking')
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 2500)
+      const res = await fetch(`http://localhost:${port}/health`, { headers: {'ngrok-skip-browser-warning':'1'}, signal: controller.signal })
+      clearTimeout(timer)
+      if (!res.ok) { setPortStatus('fail'); return }
+      const body = await res.json().catch(() => null)
+      setPortStatus(body?.status === 'ok' ? 'ok' : 'fail')
+    } catch {
+      setPortStatus('fail')
+    }
+  }
 
   // Load available projects (each with its own DB config) for the dropdown
   useEffect(() => {
@@ -628,16 +731,24 @@ export default function ContentReportDashboard(){
 
   // ── Upload screen ─────────────────────────────────────────────────────────
   if(!data&&!loading) return (
-    <UploadScreen
-      projectId={projectId} setProjectId={setProjectId} projects={projects} projectsError={projectsError}
-      inputMode={inputMode} setInputMode={setInputMode}
-      selectedYear={selectedYear} setSelectedYear={setSelectedYear} selectedMonths={selectedMonths} toggleMonth={toggleMonth}
-      includeDvb={includeDvb} setIncludeDvb={setIncludeDvb}
-      generateFromDb={generateFromDb}
-      drag={drag} setDrag={setDrag} onDrop={onDrop} processFile={processFile}
-      apiBase={apiBase} setApiBase={setApiBase} showApi={showApi} setShowApi={setShowApi}
-      error={error}
-    />
+    <>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 24px 0' }}>
+        <PortOverrideControl
+          manualPort={manualPort} setManualPort={setManualPort} portStatus={portStatus}
+          applyManualPort={applyManualPort} testPort={testPort} apiBase={apiBase} dark={false}
+        />
+      </div>
+      <UploadScreen
+        projectId={projectId} setProjectId={setProjectId} projects={projects} projectsError={projectsError}
+        inputMode={inputMode} setInputMode={setInputMode}
+        selectedYear={selectedYear} setSelectedYear={setSelectedYear} selectedMonths={selectedMonths} toggleMonth={toggleMonth}
+        includeDvb={includeDvb} setIncludeDvb={setIncludeDvb}
+        generateFromDb={generateFromDb}
+        drag={drag} setDrag={setDrag} onDrop={onDrop} processFile={processFile}
+        apiBase={apiBase} setApiBase={setApiBase} showApi={showApi} setShowApi={setShowApi}
+        error={error}
+      />
+    </>
   )
 
   // Show loading spinner overlay on top of data when fetching MySQL
@@ -797,6 +908,10 @@ export default function ContentReportDashboard(){
             style={{padding:'8px 14px',borderRadius:8,border:'1px solid rgba(255,255,255,0.3)',background:'transparent',color:'#fff',fontSize:13,cursor:'pointer'}}>
             ↑ New File
           </button>
+          <PortOverrideControl
+            manualPort={manualPort} setManualPort={setManualPort} portStatus={portStatus}
+            applyManualPort={applyManualPort} testPort={testPort} apiBase={apiBase} dark={true}
+          />
         </div>
       </div>
 
