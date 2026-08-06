@@ -141,6 +141,28 @@ export default function ContentReportDashboard(){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Checks reachability of whatever apiBase is CURRENTLY ACTIVE, every
+  // time it changes -- covers the initial page load (whether that lands
+  // on a saved manual port or the resolved ngrok URL), and any later
+  // Apply/Clear. Previously the dot only updated on the port input's
+  // onBlur, which never fires on a fresh page load with a port already
+  // restored from localStorage -- confirmed real symptom: the dot
+  // stayed gray forever after a reload even when the backend really was
+  // reachable, since nothing had actually triggered a check yet.
+  useEffect(() => {
+    if (!apiBase) return
+    let cancelled = false
+    setPortStatus('checking')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 3000)
+    fetch(`${apiBase}/health`, { headers: {'ngrok-skip-browser-warning':'1'}, signal: controller.signal })
+      .then(res => res.ok ? res.json().catch(() => null) : null)
+      .then(body => { if (!cancelled) setPortStatus(body?.status === 'ok' ? 'ok' : 'fail') })
+      .catch(() => { if (!cancelled) setPortStatus('fail') })
+      .finally(() => clearTimeout(timer))
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [apiBase])
+
   // Applies (or clears) the manual port override. Saving a port switches
   // apiBase straight to http://localhost:{port} with no reachability
   // check gating it -- typing a port already means the person knows
