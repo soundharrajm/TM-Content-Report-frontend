@@ -6,6 +6,7 @@ export default function UploadScreen({
   projectId, setProjectId, projects, projectsError,
   inputMode, setInputMode,
   selectedYear, setSelectedYear, selectedMonths, toggleMonth,
+  dbQueryMode, setDbQueryMode, fromDateTime, setFromDateTime, toDateTime, setToDateTime,
   includeDvb, setIncludeDvb,
   generateFromDb,
   drag, setDrag, onDrop, processFile,
@@ -57,22 +58,58 @@ export default function UploadScreen({
 
         {inputMode === 'months' ? (
           <div style={{textAlign:'left',marginBottom:16,background:C.card,border:`1.5px solid ${C.border}`,borderRadius:12,padding:16}}>
-            <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>Year</label>
-            <input type="number" value={selectedYear} onChange={e=>setSelectedYear(parseInt(e.target.value)||selectedYear)}
-              style={{width:'100%',padding:'9px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,
-                background:C.bg,color:C.navy,fontSize:14,fontWeight:600,outline:'none',boxSizing:'border-box',marginBottom:14}} />
 
-            <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>Months</label>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,marginBottom:14}}>
-              {MONTH_NAMES.map((name,i)=>{
-                const m = i+1, active = selectedMonths.includes(m)
-                return (
-                  <button key={m} onClick={()=>toggleMonth(m)} style={{padding:'8px 4px',borderRadius:8,
-                    border:`1.5px solid ${active?C.blue:C.border}`,background:active?C.blue:C.bg,
-                    color:active?'#fff':C.muted,fontWeight:700,fontSize:12,cursor:'pointer'}}>{name}</button>
-                )
-              })}
+            {/* Sub-toggle: whole month(s)/year (existing behavior) vs an
+                exact date-AND-TIME range. A separate toggle from the
+                Upload/Months one above since this only matters once
+                you're already in DB-query mode. */}
+            <div style={{display:'flex',gap:6,marginBottom:14}}>
+              <button onClick={()=>setDbQueryMode('month')} style={{flex:1,padding:'7px 10px',borderRadius:8,
+                border:`1.5px solid ${dbQueryMode==='month'?C.blue:C.border}`,
+                background:dbQueryMode==='month'?'#EAF1FB':C.bg,color:dbQueryMode==='month'?C.blue:C.muted,
+                fontWeight:700,fontSize:12,cursor:'pointer'}}>Month / Year</button>
+              <button onClick={()=>setDbQueryMode('range')} style={{flex:1,padding:'7px 10px',borderRadius:8,
+                border:`1.5px solid ${dbQueryMode==='range'?C.blue:C.border}`,
+                background:dbQueryMode==='range'?'#EAF1FB':C.bg,color:dbQueryMode==='range'?C.blue:C.muted,
+                fontWeight:700,fontSize:12,cursor:'pointer'}}>Date & Time Range</button>
             </div>
+
+            {dbQueryMode === 'range' ? (
+              <>
+                <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>From</label>
+                <input type="datetime-local" value={fromDateTime} onChange={e=>setFromDateTime(e.target.value)}
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,
+                    background:C.bg,color:C.navy,fontSize:14,fontWeight:600,outline:'none',boxSizing:'border-box',marginBottom:14}} />
+
+                <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>To</label>
+                <input type="datetime-local" value={toDateTime} onChange={e=>setToDateTime(e.target.value)}
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,
+                    background:C.bg,color:C.navy,fontSize:14,fontWeight:600,outline:'none',boxSizing:'border-box',marginBottom:14}} />
+
+                <p style={{fontSize:11,color:C.muted,marginTop:-8,marginBottom:14}}>
+                  Content is matched down to the minute. Note: the Date-wise/Month-wise summary sheets and DVB data still group by whichever calendar month(s) this range falls in — an exact same-year range is required.
+                </p>
+              </>
+            ) : (
+              <>
+                <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>Year</label>
+                <input type="number" value={selectedYear} onChange={e=>setSelectedYear(parseInt(e.target.value)||selectedYear)}
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,
+                    background:C.bg,color:C.navy,fontSize:14,fontWeight:600,outline:'none',boxSizing:'border-box',marginBottom:14}} />
+
+                <label style={{fontSize:12,fontWeight:600,color:C.navy,display:'block',marginBottom:6}}>Months</label>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,marginBottom:14}}>
+                  {MONTH_NAMES.map((name,i)=>{
+                    const m = i+1, active = selectedMonths.includes(m)
+                    return (
+                      <button key={m} onClick={()=>toggleMonth(m)} style={{padding:'8px 4px',borderRadius:8,
+                        border:`1.5px solid ${active?C.blue:C.border}`,background:active?C.blue:C.bg,
+                        color:active?'#fff':C.muted,fontWeight:700,fontSize:12,cursor:'pointer'}}>{name}</button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
 
             {/* Only shown for whichever project actually has DVB (Harmonic)
                 configured -- hides immediately if a different project is
@@ -95,12 +132,21 @@ export default function UploadScreen({
               </label>
             )}
 
-            <button onClick={()=>generateFromDb()} disabled={!selectedMonths.length}
-              style={{width:'100%',padding:'12px',borderRadius:10,border:'none',
-                background:selectedMonths.length?C.blue:'#ccc',color:'#fff',fontWeight:700,fontSize:14,
-                cursor:selectedMonths.length?'pointer':'not-allowed'}}>
-              ⚡ Generate Report ({selectedMonths.length} month{selectedMonths.length===1?'':'s'} selected)
-            </button>
+            {dbQueryMode === 'range' ? (
+              <button onClick={()=>generateFromDb()} disabled={!fromDateTime || !toDateTime}
+                style={{width:'100%',padding:'12px',borderRadius:10,border:'none',
+                  background:(fromDateTime && toDateTime)?C.blue:'#ccc',color:'#fff',fontWeight:700,fontSize:14,
+                  cursor:(fromDateTime && toDateTime)?'pointer':'not-allowed'}}>
+                ⚡ Generate Report (custom range)
+              </button>
+            ) : (
+              <button onClick={()=>generateFromDb()} disabled={!selectedMonths.length}
+                style={{width:'100%',padding:'12px',borderRadius:10,border:'none',
+                  background:selectedMonths.length?C.blue:'#ccc',color:'#fff',fontWeight:700,fontSize:14,
+                  cursor:selectedMonths.length?'pointer':'not-allowed'}}>
+                ⚡ Generate Report ({selectedMonths.length} month{selectedMonths.length===1?'':'s'} selected)
+              </button>
+            )}
           </div>
         ) : (
         <>

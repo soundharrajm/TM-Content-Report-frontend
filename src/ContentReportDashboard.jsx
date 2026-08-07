@@ -81,8 +81,20 @@ export default function ContentReportDashboard(){
   const [projectId, setProjectId] = useState('default')
   const [projectsError, setProjectsError] = useState(null)
   const [inputMode, setInputMode] = useState('upload')   // 'upload' | 'months'
+  // Within 'months' mode, a second toggle: whole month(s)/year (existing
+  // behavior) vs an exact date-AND-TIME range (new). Kept as a separate
+  // toggle rather than overloading inputMode itself, since 'upload' is an
+  // entirely different flow (file, not DB query) from this DB-query
+  // sub-choice.
+  const [dbQueryMode, setDbQueryMode] = useState('month')   // 'month' | 'range'
   const [selectedMonths, setSelectedMonths] = useState([new Date().getMonth() + 1])
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
+  // datetime-local inputs give 'YYYY-MM-DDTHH:MM' -- stored as-is and
+  // converted to the backend's 'YYYY-MM-DD HH:MM:SS' at request time (see
+  // generateFromDb), so the input field itself never has to deal with the
+  // space-vs-T formatting difference.
+  const [fromDateTime, setFromDateTime] = useState('')
+  const [toDateTime, setToDateTime] = useState('')
 
   // Tracks whichever polling interval is currently active, persisted across
   // renders and re-invocations — without this, clicking "Generate Report"
@@ -425,21 +437,43 @@ export default function ContentReportDashboard(){
   const generateFromDb = useCallback(async () => {
     clearActivePoll()  // stop any previous job's polling before starting a new one
     setError(null); setLoading(true); setData(null)
+
+    // 'YYYY-MM-DDTHH:MM' (datetime-local's format) -> 'YYYY-MM-DD HH:MM:SS'
+    // (what the backend/SQL expects) -- append ':00' for seconds since
+    // datetime-local never supplies them.
+    const toBackendDateTime = (v) => v ? v.replace('T', ' ') + ':00' : null
+
+    if (dbQueryMode === 'range' && (!fromDateTime || !toDateTime)) {
+      setError('Pick both a "from" and "to" date & time before generating.')
+      setLoading(false)
+      return
+    }
+
     setLoadingMsg('Querying database...')
     await new Promise(resolve => setTimeout(resolve, 50))
     const pollRef = { current: null }
 
     try {
+      const body = dbQueryMode === 'range'
+        ? {
+            project_id: projectId,
+            from_date: toBackendDateTime(fromDateTime),
+            to_date: toBackendDateTime(toDateTime),
+            include_archived_purged: includeArchivedPurged,
+            include_dvb: includeDvb,
+          }
+        : {
+            project_id: projectId,
+            months: selectedMonths,
+            year: selectedYear,
+            include_archived_purged: includeArchivedPurged,
+            include_dvb: includeDvb,
+          }
+
       const res = await fetch(`${apiBase}/generate-from-db`, {
         method: 'POST',
         headers: {'Content-Type':'application/json', 'ngrok-skip-browser-warning':'1'},
-        body: JSON.stringify({
-          project_id: projectId,
-          months: selectedMonths,
-          year: selectedYear,
-          include_archived_purged: includeArchivedPurged,
-          include_dvb: includeDvb,
-        }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) {
         const errBody = await res.json().catch(()=>({detail: `Backend error: ${res.status}`}))
@@ -489,7 +523,7 @@ export default function ContentReportDashboard(){
       setError(err.message)
       setLoading(false)
     }
-  }, [apiBase, projectId, selectedMonths, selectedYear, includeArchivedPurged, includeDvb, pollJobStatus])
+  }, [apiBase, projectId, selectedMonths, selectedYear, dbQueryMode, fromDateTime, toDateTime, includeArchivedPurged, includeDvb, pollJobStatus])
 
   const processFile = useCallback(async(file) => {
     clearActivePoll()  // stop any previous job's polling before starting a new one
@@ -764,6 +798,8 @@ export default function ContentReportDashboard(){
         projectId={projectId} setProjectId={setProjectId} projects={projects} projectsError={projectsError}
         inputMode={inputMode} setInputMode={setInputMode}
         selectedYear={selectedYear} setSelectedYear={setSelectedYear} selectedMonths={selectedMonths} toggleMonth={toggleMonth}
+        dbQueryMode={dbQueryMode} setDbQueryMode={setDbQueryMode}
+        fromDateTime={fromDateTime} setFromDateTime={setFromDateTime} toDateTime={toDateTime} setToDateTime={setToDateTime}
         includeDvb={includeDvb} setIncludeDvb={setIncludeDvb}
         generateFromDb={generateFromDb}
         drag={drag} setDrag={setDrag} onDrop={onDrop} processFile={processFile}
