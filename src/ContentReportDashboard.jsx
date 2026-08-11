@@ -59,7 +59,10 @@ export default function ContentReportDashboard(){
   const [dlLoading,setDlLoading]= useState(false)
   const [dlWaitMsg,setDlWaitMsg] = useState('')
   const [loadingMsg,setLoadingMsg] = useState('Processing file...')
-  const [apiBase,setApiBase]   = useState(API_BASE)
+  const [apiBase,setApiBase]   = useState(() => {
+    const savedPort = localStorage.getItem('content_report_manual_port')
+    return savedPort ? `http://localhost:${savedPort}` : API_BASE
+  })
   const [showApi,setShowApi]   = useState(false)
   // Direct localhost-port override -- when set, requests go straight to
   // http://localhost:{port}, skipping resolveApiBase()'s own ngrok-first/
