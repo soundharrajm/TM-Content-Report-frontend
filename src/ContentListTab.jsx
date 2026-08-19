@@ -2,20 +2,22 @@ import { useState, useEffect, useMemo } from "react"
 import { C } from "./reportUtils.js"
 
 // The six timing columns this tab exists to surface, plus the core
-// identifying columns every row needs regardless. Timing columns are
-// computed server-side in content_report_routes.py's /content-list
-// endpoint, directly from the raw timestamps already selected in
-// mysql_source.py's build_video_index_query -- see that endpoint's own
-// comment for why the computation lives there rather than depending on
-// process_dataframe.
+// identifying columns every row needs regardless, and the status field
+// itself (vod_cms_status -- confirmed as the actual field name/values
+// via reportUtils.js's own local-parsing fallback logic: lowercase
+// 'published'/'draft'/'archived'/'purged'). Timing columns are computed
+// server-side in content_report_routes.py's /content-list endpoint,
+// directly from the raw timestamps already selected in mysql_source.py's
+// build_video_index_query.
 const ALL_COLUMNS = [
   ['content_id', 'Content ID'],
   ['content_key', 'Content Key'],
   ['content_title', 'Content Title'],
   ['content_type', 'Content Type'],
+  ['vod_cms_status', 'Status'],
   ['external_id', 'External ID'],
   ['cp_name', 'CP Name'],
-  ['status', 'Status'],
+  ['status', 'Encode Status'],
   ['video_file_name', 'Video File Name'],
   ['resolution', 'Resolution'],
   ['duration', 'Duration'],
@@ -27,14 +29,25 @@ const ALL_COLUMNS = [
   ['video_processing_time', 'Video Processing Time'],
 ]
 
-// Default selection -- the 6 new timing columns are what this tab exists
-// for, so they're on by default; a few core identifying columns too, so
-// a row is recognizable at a glance without needing to pick anything first.
+// Default selection -- the requested 9 columns: 3 identifying + the 6
+// timing columns this tab exists for.
 const DEFAULT_SELECTED = [
   'content_id', 'content_title', 'content_type',
   'video_created_time', 'encode_manifest_updated_time', 'overall_content_processing_time',
   'encode_index_video_created_time', 'encode_media_cmfv_updated_time', 'video_processing_time',
 ]
+
+// Fixed display order -- 'unknown' catches anything that's null, empty,
+// or genuinely doesn't match one of the four real statuses, so a row
+// never silently disappears just because its status value is unexpected.
+const STATUS_ORDER = ['published', 'draft', 'archived', 'purged', 'unknown']
+const STATUS_LABEL = { published: 'Published', draft: 'Draft', archived: 'Archived', purged: 'Purged', unknown: 'Unknown / Missing Status' }
+const STATUS_COLOR = { published: '#1E7E34', draft: '#B8860B', archived: '#922B21', purged: '#4D4D4D', unknown: '#5a6a8a' }
+
+function normalizeStatus(raw) {
+  const v = String(raw ?? '').trim().toLowerCase()
+  return STATUS_ORDER.includes(v) ? v : 'unknown'
+}
 
 export default function ContentListTab({ apiBase, jobId }) {
   const [rows, setRows] = useState(null)
@@ -43,6 +56,10 @@ export default function ContentListTab({ apiBase, jobId }) {
   const [selectedCols, setSelectedCols] = useState(DEFAULT_SELECTED)
   const [showColumnPicker, setShowColumnPicker] = useState(false)
   const [filterText, setFilterText] = useState('')
+  // All expanded by default -- "include all status" means every group is
+  // visible without needing to click anything first; collapsing is just
+  // an option for once there's a lot to scroll past.
+  const [collapsed, setCollapsed] = useState({})
 
   useEffect(() => {
     if (!jobId) return
@@ -67,6 +84,15 @@ export default function ContentListTab({ apiBase, jobId }) {
     const needle = filterText.trim().toLowerCase()
     return rows.filter(r => selectedCols.some(col => String(r[col] ?? '').toLowerCase().includes(needle)))
   }, [rows, filterText, selectedCols])
+
+  // Groups by status -- ALL statuses included, nothing filtered out by
+  // default. A row with a missing/unrecognized status lands in 'unknown'
+  // rather than being silently dropped.
+  const grouped = useMemo(() => {
+    const g = { published: [], draft: [], archived: [], purged: [], unknown: [] }
+    for (const r of filteredRows) g[normalizeStatus(r.vod_cms_status)].push(r)
+    return g
+  }, [filteredRows])
 
   const btnStyle = (active) => ({
     padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
@@ -128,33 +154,53 @@ export default function ContentListTab({ apiBase, jobId }) {
         </div>
       </div>
 
-      <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 10, border: `1px solid ${C.border}` }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead>
-            <tr>
-              {selectedCols.map(key => {
-                const label = ALL_COLUMNS.find(([k]) => k === key)?.[1] || key
-                return (
-                  <th key={key} style={{ padding: '9px 12px', textAlign: 'left', fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: `1px solid ${C.border}`, background: C.bg, whiteSpace: 'nowrap' }}>
-                    {label}
-                  </th>
-                )
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {filteredRows.map((r, i) => (
-              <tr key={i}>
-                {selectedCols.map(key => (
-                  <td key={key} style={{ padding: '7px 12px', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap', color: r[key] == null ? '#cbd5e1' : C.text }}>
-                    {r[key] ?? '—'}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {STATUS_ORDER.map(status => {
+        const statusRows = grouped[status]
+        if (statusRows.length === 0) return null   // nothing to show for THIS status given the current filter -- not the same as excluding the status itself
+        const isCollapsed = !!collapsed[status]
+        return (
+          <div key={status} style={{ marginBottom: 16, background: '#fff', borderRadius: 10, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+            <div
+              onClick={() => setCollapsed(prev => ({ ...prev, [status]: !prev[status] }))}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: C.bg, borderBottom: isCollapsed ? 'none' : `1px solid ${C.border}` }}
+            >
+              <span style={{ fontSize: 11, color: C.muted, display: 'inline-block', width: 12 }}>{isCollapsed ? '▸' : '▾'}</span>
+              <span style={{ width: 9, height: 9, borderRadius: '50%', background: STATUS_COLOR[status], flexShrink: 0 }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{STATUS_LABEL[status]}</span>
+              <span style={{ fontSize: 12, color: C.muted }}>{statusRows.length} row{statusRows.length === 1 ? '' : 's'}</span>
+            </div>
+            {!isCollapsed && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {selectedCols.map(key => {
+                        const label = ALL_COLUMNS.find(([k]) => k === key)?.[1] || key
+                        return (
+                          <th key={key} style={{ padding: '9px 12px', textAlign: 'left', fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: `1px solid ${C.border}`, background: '#fafbfd', whiteSpace: 'nowrap' }}>
+                            {label}
+                          </th>
+                        )
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statusRows.map((r, i) => (
+                      <tr key={i}>
+                        {selectedCols.map(key => (
+                          <td key={key} style={{ padding: '7px 12px', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap', color: r[key] == null ? '#cbd5e1' : C.text }}>
+                            {r[key] ?? '—'}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
