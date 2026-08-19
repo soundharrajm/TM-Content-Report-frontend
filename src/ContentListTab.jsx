@@ -18,6 +18,17 @@ const TIMING_COLUMNS = [
 // work regardless of which convention any given column actually uses.
 function normalizeKey(k) { return k.toLowerCase().replace(/[\s_]/g, '') }
 
+// Internal boolean flags used only to compute the Summary tab's
+// aggregate counts (published/archived/purged/draft x airing/manual x
+// L2V breakdowns) -- not meaningful as a per-row data column here, so
+// excluded regardless of what casing/spacing convention the backend
+// happens to use for any of them.
+const EXCLUDED_COLUMNS = [
+  'is_airing', 'is_no_video', 'is_published', 'is_archived', 'is_purged', 'is_draft',
+  'is_manual', 'is_manual_total', 'is_l2v', 'is_l2v_published', 'is_l2v_archived',
+  'is_l2v_purged', 'is_l2v_draft', 'is_manual_archived', 'is_manual_purged', 'is_manual_draft',
+].map(normalizeKey)
+
 function getVal(row, targetKey) {
   if (row[targetKey] !== undefined) return row[targetKey]
   const normTarget = normalizeKey(targetKey)
@@ -76,6 +87,7 @@ export default function ContentListTab({ apiBase, jobId }) {
         // default, plus these" is exactly what this default selection
         // needs to be, not a curated subset.
         const cols = [...new Set([...(data.columns || []), ...TIMING_COLUMNS])]
+          .filter(c => !EXCLUDED_COLUMNS.includes(normalizeKey(c)))
         setAllColumns(cols)
         setSelectedCols(cols)
       })
