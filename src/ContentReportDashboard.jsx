@@ -5,6 +5,7 @@ import UploadScreen from "./UploadScreen.jsx"
 import SummaryTab from "./SummaryTab.jsx"
 import DateWiseTab from "./DateWiseTab.jsx"
 import MonthWiseTab from "./MonthWiseTab.jsx"
+import ContentListTab from "./ContentListTab.jsx"
 
 // ── Localhost port override control ─────────────────────────────────────────
 // Shared between the upload screen (no report generated yet) and the main
@@ -21,29 +22,37 @@ function PortOverrideControl({ manualPort, setManualPort, portStatus, applyManua
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} title={`Currently talking to: ${apiBase}`}>
       <span style={dot} />
-      <input
-        type="number"
-        value={manualPort}
-        onChange={e => setManualPort(e.target.value)}
-        onBlur={e => testPort(e.target.value)}
-        placeholder="Port (blank = ngrok)"
-        style={inputStyle}
-      />
-      <button
-        onClick={() => applyManualPort(manualPort)}
-        title="Connect directly to http://localhost:{port} -- leave the field empty and click this to go back to ngrok / auto-detect"
-        style={{ ...btnBase, border: 'none', background: dark ? '#2E75B6' : '#1F3864', color: '#fff', fontWeight: 600 }}
-      >
-        Apply
-      </button>
-      {manualPort && (
-        <button
-          onClick={() => applyManualPort('')}
-          title="Clear the manual port and go back to ngrok / auto-detect"
-          style={{ ...btnBase, border: dark ? '1px solid rgba(255,255,255,0.3)' : '1px solid #D0DAF0', background: 'transparent', color: textColor }}
-        >
-          Clear
-        </button>
+      {/* Manual localhost-port override is a DEV-only convenience --
+          hidden entirely in a production build, since applyManualPort
+          already no-ops there (see the guard on it above) and a
+          non-functional control would just look broken/confusing. */}
+      {!import.meta.env.PROD && (
+        <>
+          <input
+            type="number"
+            value={manualPort}
+            onChange={e => setManualPort(e.target.value)}
+            onBlur={e => testPort(e.target.value)}
+            placeholder="Port (blank = ngrok)"
+            style={inputStyle}
+          />
+          <button
+            onClick={() => applyManualPort(manualPort)}
+            title="Connect directly to http://localhost:{port} -- leave the field empty and click this to go back to ngrok / auto-detect"
+            style={{ ...btnBase, border: 'none', background: dark ? '#2E75B6' : '#1F3864', color: '#fff', fontWeight: 600 }}
+          >
+            Apply
+          </button>
+          {manualPort && (
+            <button
+              onClick={() => applyManualPort('')}
+              title="Clear the manual port and go back to ngrok / auto-detect"
+              style={{ ...btnBase, border: dark ? '1px solid rgba(255,255,255,0.3)' : '1px solid #D0DAF0', background: 'transparent', color: textColor }}
+            >
+              Clear
+            </button>
+          )}
+        </>
       )}
     </div>
   )
@@ -148,7 +157,11 @@ export default function ContentReportDashboard(){
     // full stop" -- skip resolveApiBase()'s network probing (ngrok
     // first, then a scan of candidate ports) entirely rather than
     // racing it against an explicit choice the person already made.
-    if (manualPort) {
+    // Ignored entirely in a production build -- production always talks
+    // to VITE_API_URL, with no way for a browser to redirect it to
+    // localhost, even if a port was saved from an earlier dev session in
+    // that same browser profile.
+    if (manualPort && !import.meta.env.PROD) {
       setApiBase(`http://localhost:${manualPort}`)
       return
     }
@@ -189,6 +202,7 @@ export default function ContentReportDashboard(){
   // then the local port scan) exactly like a fresh page load with
   // nothing saved.
   const applyManualPort = (rawPort) => {
+    if (import.meta.env.PROD) return
     const port = rawPort.trim()
     setPortStatus(null)
     if (port) {
@@ -1008,6 +1022,7 @@ export default function ContentReportDashboard(){
           // just produce one column, identical to the Total column, adding
           // no value over the Date-wise tab that's already there.
           ...(month_cols && month_cols.length > 1 ? [['monthwise','🗓️ Month-wise']] : []),
+          ['contentlist','📃 Content List'],
         ].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             padding:'11px 18px',fontSize:13,fontWeight:tab===id?700:500,
@@ -1042,6 +1057,10 @@ export default function ContentReportDashboard(){
           <MonthWiseTab
             month_cols={month_cols} monthwise={monthwise} METRICS={METRICS} GRP_COLOR={GRP_COLOR} GRP_BG={GRP_BG}
           />
+        )}
+
+        {tab==='contentlist' && (
+          <ContentListTab apiBase={apiBase} jobId={data?.job_id} />
         )}
       </div>
     </div>
